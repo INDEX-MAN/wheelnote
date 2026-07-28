@@ -1,0 +1,1921 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>期權記賬器 — Wheel Strategy Tracker (SHORT PUT & CALL)</title>
+<style>
+  :root {
+    --bg: #f6f8fb;
+    --card: #ffffff;
+    --border: #e3e8ef;
+    --text: #1a2433;
+    --muted: #6b7888;
+    --accent: #2962ff;
+    --accent-hover: #1d4fcc;
+    --green: #16a34a;
+    --green-bg: #ecfdf5;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --yellow: #d97706;
+    --yellow-bg: #fffbeb;
+    --shadow: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-lg: 0 10px 25px rgba(0,0,0,0.1), 0 4px 10px rgba(0,0,0,0.05);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    font-size: 14px;
+  }
+  header {
+    background: linear-gradient(135deg, #1e3a8a 0%, #2962ff 100%);
+    color: white;
+    padding: 18px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 { font-size: 20px; font-weight: 600; }
+  header .subtitle { font-size: 12px; opacity: 0.85; margin-top: 2px; }
+  .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .add-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+  main { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  button:active { transform: translateY(1px); }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-secondary { background: white; color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: #f3f4f6; }
+  .btn-success { background: var(--green); color: white; }
+  .btn-success:hover { background: #15803d; }
+  .btn-danger { background: var(--red); color: white; }
+  .btn-danger:hover { background: #b91c1c; }
+  .btn-ghost { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.4); }
+  .btn-ghost:hover { background: rgba(255,255,255,0.1); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+  /* Dashboard */
+  .dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    box-shadow: var(--shadow);
+  }
+  .stat-card .label { font-size: 12px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-card .value { font-size: 24px; font-weight: 700; }
+  .stat-card .value.positive { color: var(--green); }
+  .stat-card .value.negative { color: var(--red); }
+  .stat-card .sublabel { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .summary-bar {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    box-shadow: var(--shadow);
+  }
+  .summary-bar span strong { color: var(--text); }
+
+  /* 本月日曆提示 */
+  .month-calendar {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 26px 26px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-lg);
+    position: relative;
+    overflow: hidden;
+  }
+  .month-calendar::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #1e3a8a 0%, #2962ff 50%, #16a34a 100%);
+  }
+  .cal-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .cal-title { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+  .cal-sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
+  .cal-pills { display: flex; gap: 12px; }
+  .cal-pill {
+    text-align: center;
+    padding: 10px 22px;
+    border-radius: 12px;
+    line-height: 1.1;
+    min-width: 92px;
+  }
+  .cal-pill .n { font-size: 30px; font-weight: 800; letter-spacing: -0.5px; }
+  .cal-pill .t { font-size: 11px; margin-top: 3px; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.5px; }
+  .cal-pill.left {
+    background: linear-gradient(135deg, #2962ff 0%, #1e3a8a 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(41,98,255,0.3);
+  }
+  .cal-pill.passed { background: #eef1f6; color: var(--muted); }
+
+  .cal-grid { display: flex; flex-direction: column; gap: 6px; }
+  .cal-weekhead, .cal-week-days, .cal-week-bars {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+  }
+  .cal-week { display: flex; flex-direction: column; }
+  .cal-week-days { margin-bottom: 2px; }
+  .cal-week-bars { grid-auto-rows: 22px; row-gap: 3px; min-height: 4px; margin-bottom: 6px; }
+
+  .cal-cell {
+    height: 42px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    font-weight: 600;
+    position: relative;
+    transition: transform 0.12s, box-shadow 0.12s;
+  }
+  .cal-head {
+    height: auto;
+    padding: 6px 0;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: transparent !important;
+  }
+  .cal-head.weekend { color: var(--red); }
+  /* 本月各種日子狀態，各自不同顏色 */
+  .cal-cell.in-month { border: 1px solid var(--border); }
+  .cal-cell.in-month:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+  .cal-cell.adjacent { color: #cbd3df; background: #fcfdfe; border: 1px dashed #eef1f6; }
+  /* 已過去的日子：灰色 */
+  .cal-cell.past.in-month { background: #eef1f5; color: #9aa5b4; border-color: #e3e8ef; }
+  /* 之後（未來）的日子：淺藍白 */
+  .cal-cell.future.in-month { background: #f4f8ff; color: var(--text); border-color: #dbe7ff; }
+  /* 週末（未過）：紅色系 */
+  .cal-cell.weekend.in-month.future { background: var(--red-bg); color: var(--red); border-color: #fde0e0; }
+  .cal-cell.weekend.in-month.past { background: #f7ecec; color: #c99; border-color: #f0dede; }
+  /* 節假日（未過）：紫色系 */
+  .cal-cell.holiday.in-month.future { background: #f5f0ff; color: #7c3aed; border-color: #e6d9ff; }
+  .cal-cell.holiday.in-month.past { background: #f0ecf7; color: #a996c9; border-color: #e6ddf0; }
+  /* 今天：藍色漸層，最醒目 */
+  .cal-cell.today {
+    background: linear-gradient(135deg, #2962ff 0%, #1e3a8a 100%) !important;
+    color: white !important;
+    border: none !important;
+    box-shadow: 0 6px 16px rgba(41,98,255,0.45);
+    transform: scale(1.06);
+    z-index: 2;
+  }
+  .cal-cell.today .cal-num::after {
+    content: '今天';
+    display: block;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin-top: 1px;
+  }
+  .cal-cell.has-event.in-month { box-shadow: inset 0 -3px 0 rgba(41,98,255,0.35); }
+  .cal-cell .cal-num { font-size: 16px; font-weight: 700; line-height: 1; text-align: center; }
+  .cal-cell .cal-holiday-dot {
+    position: absolute;
+    top: 3px; right: 5px;
+    font-size: 9px;
+    color: #7c3aed;
+  }
+  .cal-cell.today .cal-holiday-dot { color: #ffd; }
+
+  /* 期權持續期間的連接條 */
+  .cal-bar-seg {
+    height: 20px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 0 7px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    overflow: hidden;
+    white-space: nowrap;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+  }
+  .cal-bar-seg.put  { background: linear-gradient(90deg, #3b82f6, #1e40af); }
+  .cal-bar-seg.call { background: linear-gradient(90deg, #22c55e, #15803d); }
+  .cal-bar-seg.open { opacity: 0.92; }
+  .cal-bar-seg .bar-end { margin-left: auto; font-size: 12px; }
+  .cal-legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .cal-legend .lg { display: flex; align-items: center; gap: 6px; }
+  .cal-legend .sw { width: 22px; height: 10px; border-radius: 3px; }
+  .cal-legend .sw.put  { background: linear-gradient(90deg, #3b82f6, #1e40af); }
+  .cal-legend .sw.call { background: linear-gradient(90deg, #22c55e, #15803d); }
+
+  @media (max-width: 700px) {
+    .cal-cell { height: 34px; }
+    .cal-cell .cal-num { font-size: 13px; }
+    .cal-title { font-size: 18px; }
+    .cal-pill .n { font-size: 24px; }
+    .cal-grid, .cal-weekhead, .cal-week-days, .cal-week-bars { gap: 4px; }
+    .cal-bar-seg { font-size: 10px; padding: 0 4px; }
+  }
+
+  /* Sections */
+  .section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 20px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .section-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #fafbfc;
+  }
+  .section-header h2 { font-size: 15px; font-weight: 600; }
+  .section-header .count { color: var(--muted); font-size: 13px; margin-left: 8px; }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    padding: 10px 14px;
+    text-align: right;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  th:first-child, td:first-child { text-align: left; }
+  th {
+    background: #fafbfc;
+    font-weight: 600;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr { border-bottom: 1px solid var(--border); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: #fafbfc; }
+  td .stock-name { font-weight: 600; }
+  td .strike-info { color: var(--muted); font-size: 11px; }
+  .actions { display: flex; gap: 4px; justify-content: flex-end; }
+
+  .profit { color: var(--green); font-weight: 600; }
+  .loss { color: var(--red); font-weight: 600; }
+  .neutral { color: var(--text); }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge-red { background: var(--red-bg); color: var(--red); }
+  .badge-yellow { background: var(--yellow-bg); color: var(--yellow); }
+  .badge-green { background: var(--green-bg); color: var(--green); }
+  .badge-blue { background: #eff6ff; color: #2563eb; }
+  .badge-gray { background: #f3f4f6; color: var(--muted); }
+
+  .empty-state {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .empty-state .icon { font-size: 32px; margin-bottom: 8px; }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+  }
+  .modal {
+    background: white;
+    border-radius: 10px;
+    width: 100%;
+    max-width: 720px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+  }
+  .modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .modal-header h2 { font-size: 16px; }
+  .modal-close {
+    background: transparent;
+    border: none;
+    font-size: 22px;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+  }
+  .modal-close:hover { color: var(--text); }
+  .modal-body { padding: 20px; }
+  .modal-footer {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    background: #fafbfc;
+  }
+
+  /* Forms */
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+  }
+  .form-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .form-field { display: flex; flex-direction: column; }
+  .form-field.full { grid-column: 1 / -1; }
+  .form-field label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .form-field input, .form-field select {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    background: white;
+  }
+  .form-field input:focus, .form-field select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(41, 98, 255, 0.1);
+  }
+  .form-hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .radio-group { display: flex; gap: 14px; padding: 6px 0; }
+  .radio-label { display: flex; align-items: center; gap: 5px; font-size: 14px; font-weight: normal; text-transform: none; letter-spacing: 0; color: var(--text); cursor: pointer; }
+  .radio-label input[type="radio"] { margin: 0; cursor: pointer; }
+
+  /* Live preview box */
+  .preview-box {
+    margin-top: 16px;
+    padding: 14px;
+    background: #f6f8fb;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .preview-box h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+  .preview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px 16px;
+    font-size: 13px;
+  }
+  .preview-grid .label { color: var(--muted); }
+  .preview-grid .val { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--text);
+    color: white;
+    padding: 12px 18px;
+    border-radius: 6px;
+    font-size: 13px;
+    box-shadow: var(--shadow-lg);
+    z-index: 2000;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.3s;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { background: var(--green); }
+  .toast.error { background: var(--red); }
+
+  @media (max-width: 600px) {
+    .form-grid, .form-grid.cols-3 { grid-template-columns: 1fr; }
+    th, td { padding: 8px 10px; font-size: 12px; }
+    .stat-card .value { font-size: 20px; }
+  }
+
+  /* ===== Auth login/signup ===== */
+  #authView {
+    position: fixed; inset: 0;
+    background: linear-gradient(135deg, #1e3a8a 0%, #2962ff 100%);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 2000; padding: 20px;
+  }
+  .auth-card {
+    background: white; border-radius: 12px; padding: 28px;
+    width: 100%; max-width: 380px; box-shadow: var(--shadow-lg);
+  }
+  .auth-card h2 { font-size: 18px; margin-bottom: 4px; }
+  .auth-card .auth-sub { font-size: 12px; color: var(--muted); margin-bottom: 18px; }
+  .auth-card input {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: 14px; margin-bottom: 10px; font-family: inherit;
+  }
+  .auth-card input:focus { outline: none; border-color: var(--accent); }
+  .auth-card .btn-row { display: flex; gap: 8px; margin-top: 6px; }
+  .auth-card .btn-row button { flex: 1; }
+  .auth-card .auth-error { color: var(--red); font-size: 12px; margin-top: 8px; min-height: 16px; }
+  .auth-card .auth-hint { font-size: 11px; color: var(--muted); margin-top: 14px; line-height: 1.5; }
+  .user-box { display: flex; align-items: center; gap: 8px; color: white; font-size: 12px; }
+  .user-box .email { opacity: 0.9; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 沒登入時隱藏 app；登入時隱藏登入頁 */
+  body:not(.authed) > header, body:not(.authed) > main,
+  body:not(.authed) #modalContainer, body:not(.authed) #toast { display: none !important; }
+  body.authed #authView { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="authView">
+  <div class="auth-card">
+    <h2>📊 期權記賬器</h2>
+    <div class="auth-sub">登入帳號，資料雲端同步、跨裝置使用</div>
+    <input type="email" id="authEmail" placeholder="電郵 email" autocomplete="email">
+    <input type="password" id="authPassword" placeholder="密碼 password" autocomplete="current-password">
+    <div class="btn-row">
+      <button class="btn-primary" onclick="authLogin()">登入</button>
+      <button class="btn-secondary" onclick="authSignUp()">註冊</button>
+    </div>
+    <div class="auth-error" id="authError"></div>
+    <div class="auth-hint">第一次使用請按「註冊」建立帳號。資料綁定帳號，在任何裝置登入都能看到自己的記錄。</div>
+  </div>
+</div>
+
+<header>
+  <div>
+    <h1>📊 期權記賬器 — Wheel Strategy (SHORT PUT & CALL)</h1>
+    <div class="subtitle">雲端同步 · 香港市場 · 登入後跨裝置使用</div>
+  </div>
+  <div class="header-actions">
+    <button class="btn-primary" onclick="openNewModal('put')">＋ 新增 SHORT PUT</button>
+    <button class="btn-success" onclick="openNewModal('call')">＋ 新增 SHORT CALL</button>
+    <button class="btn-ghost" onclick="exportData()">⬇ 匯出</button>
+    <button class="btn-ghost" onclick="document.getElementById('importFile').click()">⬆ 匯入</button>
+    <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
+    <div class="user-box" id="userBox" style="display:none">
+      <span class="email" id="userEmail"></span>
+      <button class="btn-ghost btn-sm" id="importLocalBtn" onclick="importLocalData()" style="display:none">📥 匯入本機舊資料</button>
+      <button class="btn-ghost btn-sm" onclick="authLogout()">登出</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div id="monthCalendar"></div>
+  <div class="dashboard" id="dashboard"></div>
+  <div class="summary-bar" id="summaryBar"></div>
+
+  <section class="section">
+    <div class="section-header">
+      <h2>📅 月總結 <span class="count" id="monthlyCount"></span></h2>
+    </div>
+    <div class="table-wrap">
+      <table id="monthlyTable">
+        <thead>
+          <tr>
+            <th>月份</th>
+            <th>已平倉筆數</th>
+            <th>持倉中筆數</th>
+            <th>淨期權金</th>
+            <th>手續費</th>
+            <th>已實現損益</th>
+            <th>勝率</th>
+          </tr>
+        </thead>
+        <tbody id="monthlyBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-header">
+      <h2>🔴 持倉中 <span class="count" id="openCount"></span></h2>
+      <div class="add-buttons">
+        <button class="btn-primary btn-sm" onclick="openNewModal('put')">＋ 新增 SHORT PUT</button>
+        <button class="btn-success btn-sm" onclick="openNewModal('call')">＋ 新增 SHORT CALL</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="openTable">
+        <thead>
+          <tr>
+            <th>類型</th>
+            <th>股票 / 行權價</th>
+            <th>賣出日</th>
+            <th>到期日</th>
+            <th>剩餘天數</th>
+            <th>張數</th>
+            <th>每張股數</th>
+            <th>賣出價</th>
+            <th>賣出期權金</th>
+            <th>購買股票成本</th>
+            <th>持貨成本 / 保本價</th>
+            <th>持倉天</th>
+            <th>期權金/天</th>
+            <th>未實現損益</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="openBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-header">
+      <h2>✅ 已平倉 <span class="count" id="closedCount"></span></h2>
+    </div>
+    <div class="table-wrap">
+      <table id="closedTable">
+        <thead>
+          <tr>
+            <th>類型</th>
+            <th>股票 / 行權價</th>
+            <th>賣出日</th>
+            <th>買入日</th>
+            <th>到期日</th>
+            <th>持倉天</th>
+            <th>張數</th>
+            <th>賣出價</th>
+            <th>買入價</th>
+            <th>淨期權金</th>
+            <th>購買股票成本</th>
+            <th>手續費</th>
+            <th>損益 P&L</th>
+            <th>報酬率</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="closedBody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div id="modalContainer"></div>
+<div id="toast" class="toast"></div>
+
+<script src="supabase-js.js"></script>
+<script>
+// ====================================================================
+// 期權記賬器 — Vanilla JS, single file
+// ====================================================================
+
+const STORAGE_KEY = 'options-tracker-v1';
+
+// ===== Supabase 雲端設定（anon key 是公開的，靠 RLS 保護） =====
+const SUPABASE_URL = 'https://fvutyuqxuhlbheuzjzym.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ2dXR5dXF4dWhsYmhldXpqenltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxMzU4NjAsImV4cCI6MjEwMDcxMTg2MH0.4WdXWgFxgEmkcwSuN6kC_vCopK6NJYFUaKQLKplHJ7Y';
+let sb = null;
+try {
+  if (!window.supabase) throw new Error('Supabase SDK 沒載到（supabase-js.js 載入失敗）');
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+} catch (e) {
+  console.error('Supabase 初始化失敗：', e);
+  authShowError('Supabase 載入失敗：' + (e.message || e) + '。請重新整理頁面。');
+}
+let currentUser = null;   // 登入後存 user 物件；未登入為 null
+
+const HKD = new Intl.NumberFormat('zh-HK', { style: 'currency', currency: 'HKD', maximumFractionDigits: 2 });
+const NUM = new Intl.NumberFormat('zh-HK', { maximumFractionDigits: 2 });
+
+// 美元兌港幣固定匯率：美元部位的金額自動以此換算成港幣
+const USD_HKD_RATE = 7.8;
+// 把「該部位原幣別的金額」換算成港幣（USD ×7.8，HKD 不變）
+function toHKD(p, v) {
+  return ((p && p.currency === 'USD') ? USD_HKD_RATE : 1) * (+v || 0);
+}
+
+let state = { positions: [] };
+
+// 香港公眾假期（2025–2026）YYYY-MM-DD -> 名稱
+const HK_HOLIDAYS = {
+  '2025-01-01': '元旦',
+  '2025-01-29': '農曆年初一', '2025-01-30': '年初二', '2025-01-31': '年初三',
+  '2025-04-04': '清明節',
+  '2025-04-18': '耶穌受難節', '2025-04-19': '受難節翌日', '2025-04-21': '復活節翌日',
+  '2025-05-01': '勞動節', '2025-05-05': '佛誕',
+  '2025-05-31': '端午節',
+  '2025-07-01': '香港回歸日',
+  '2025-10-01': '國慶日', '2025-10-07': '中秋節翌日', '2025-10-29': '重陽節',
+  '2025-12-25': '聖誕節', '2025-12-26': '聖誕後第一個週日',
+  '2026-01-01': '元旦',
+  '2026-02-17': '農曆年初一', '2026-02-18': '年初二', '2026-02-19': '年初三',
+  '2026-04-03': '耶穌受難節', '2026-04-04': '清明節', '2026-04-06': '復活節翌日',
+  '2026-05-01': '勞動節', '2026-05-25': '佛誕',
+  '2026-06-19': '端午節',
+  '2026-07-01': '香港回歸日',
+  '2026-09-26': '中秋節翌日',
+  '2026-10-01': '國慶日', '2026-10-19': '重陽節',
+  '2026-12-25': '聖誕節', '2026-12-26': '聖誕後第一個週日',
+};
+
+// ----- Persistence (Supabase 雲端) -----
+// 把整份 state 存成 app_state 表裡「自己那筆」(jsonb)，每人一筆
+async function save() {
+  if (!currentUser) return;
+  try {
+    const { error } = await sb
+      .from('app_state')
+      .upsert(
+        { user_id: currentUser.id, data: state, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' }
+      );
+    if (error) throw error;
+  } catch (e) {
+    showToast('雲端儲存失敗：' + (e.message || e), 'error');
+  }
+}
+function applyState(parsed) {
+  if (parsed && Array.isArray(parsed.positions)) {
+    // 為舊資料補欄位（相容性）
+    parsed.positions.forEach(p => {
+      if (!p.type) p.type = 'put';
+      if (!p.currency) p.currency = 'HKD';   // 舊資料預設港幣
+    });
+    state = parsed;
+  }
+}
+async function load() {
+  if (!currentUser) return;
+  try {
+    const { data, error } = await sb
+      .from('app_state')
+      .select('data')
+      .eq('user_id', currentUser.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (data && data.data) applyState(data.data);
+    else state = { positions: [] };
+  } catch (e) {
+    console.error('Load failed', e);
+    showToast('載入雲端資料失敗：' + (e.message || e), 'error');
+  }
+}
+
+// ----- Utilities -----
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+function today() {
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
+}
+function fmtDate(s) {
+  if (!s) return '—';
+  const d = new Date(s);
+  return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+}
+function daysBetween(a, b) {
+  // both as YYYY-MM-DD; treat as UTC noon to avoid TZ off-by-one
+  const da = new Date(a + 'T12:00:00');
+  const db = new Date(b + 'T12:00:00');
+  return Math.round((db - da) / (1000 * 60 * 60 * 24));
+}
+
+// ----- Calculations -----
+function calc(p) {
+  const shares = +p.sharesPerContract || 0;
+  const contracts = +p.contracts || 0;
+  const sell = toHKD(p, p.sellPrice);     // 原幣 -> 港幣
+  const buy = toHKD(p, p.buyPrice);
+  const strike = toHKD(p, p.strikePrice);
+  const comm = toHKD(p, p.commission);
+  const type = p.type || 'put';  // 預設 put（相容舊資料）
+
+  // 持貨成本（Short Call 專用，記錄「用什麼價買了這批股票」）
+  const holdingCost = toHKD(p, p.holdingCost);   // 每股平均買入價（港幣）
+  const holdingShares = +p.holdingShares || 0; // 已持有股數（驗證用）
+
+  const sellPremium = sell * shares * contracts;
+  const buyPremium = buy * shares * contracts;
+  const netPremium = sellPremium - buyPremium;
+  const profit = netPremium - comm;
+  const closingCost = buy * shares * contracts;
+
+  // 對於 SHORT PUT: 風險 = 被指派接貨 = strike × shares × contracts
+  // 對於 SHORT CALL: 風險 = 被指派交貨 = strike × shares × contracts
+  const stockCost = strike * shares * contracts;
+
+  // 淨股票成本 / 淨持倉收益
+  // 對於 PUT: 淨接貨成本 = strike × 股數 - premium
+  // 對於 CALL: 淨交貨收入 = strike × 股數 + premium（被指派後實際售股收入）
+  const netStockCost = stockCost - netPremium;
+
+  // === Short Call 持貨分析 ===
+  // 若已有持股，計算：
+  //   - 持股總成本 = holdingCost × holdingShares
+  //   - 賣出後總收入（若被指派）= strike × shares × contracts + sellPremium
+  //   - 持倉淨損益（若被指派）= 賣出收入 - 持股成本
+  //   - 若未到期未平倉：只算 premium
+  let holdingAnalysis = null;
+  if (type === 'call' && holdingCost > 0 && holdingShares > 0) {
+    const holdingTotalCost = holdingCost * holdingShares;
+    const soldRevenue = strike * shares * contracts;
+    const soldTotalRevenue = soldRevenue + sellPremium;  // 扣佣金前
+    const netHoldingPL = soldTotalRevenue - holdingTotalCost - comm;  // 扣佣金
+    const breakeven = holdingCost - (sellPremium / shares);  // 保本價（不算手續費）
+    holdingAnalysis = {
+      holdingTotalCost,    // 持股總成本
+      holdingShares,       // 持股股數
+      soldRevenue,         // 賣出收入（行權價 × 張數 × 股數）
+      soldTotalRevenue,    // 加上 premium 後總收入
+      netHoldingPL,        // 淨損益（賣出後）
+      breakeven,           // 保本價
+      covered: holdingShares >= shares * contracts,  // 持股是否足夠覆蓋
+    };
+  }
+
+  const returnPct = stockCost > 0 ? (profit / stockCost) * 100 : 0;
+
+  const isOpen = !p.closeDate;
+  const refDate = p.closeDate || today();
+  const holdingDays = Math.max(1, daysBetween(p.openDate, refDate));
+  // 期權金/天：已平倉用「實際持有天數」；持倉中用「開倉→到期」總天數，
+  // 這樣持倉中的每日收入是鎖定的時間價值，不會隨持有天數變多而越除越小
+  let perDay;
+  if (isOpen && p.expirationDate) {
+    const termDays = Math.max(1, daysBetween(p.openDate, p.expirationDate));
+    perDay = netPremium / termDays;
+  } else {
+    perDay = netPremium / holdingDays;
+  }
+
+  let daysToExpiry = null;
+  if (isOpen && p.expirationDate) {
+    daysToExpiry = daysBetween(today(), p.expirationDate);
+  }
+
+  return {
+    type, sellPremium, buyPremium, netPremium, profit,
+    stockCost, netStockCost, returnPct, holdingDays, perDay,
+    daysToExpiry, isOpen, closingCost, holdingAnalysis
+  };
+}
+
+// 到期自動平倉：到期日（含）當天仍未手動平倉，視為「到期未到價（OTM）自動結束」，
+// 買入價設 0（保留全部期權金）、平倉日 = 到期日。已手動平倉或未到期者不處理。
+function applyAutoExpiry() {
+  const t = today();
+  let changed = false;
+  state.positions.forEach(p => {
+    if (p.closeDate) return;                           // 已手動平倉
+    if (!p.expirationDate) return;                     // 無到期日，無法判斷
+    if (daysBetween(t, p.expirationDate) > 0) return;  // 尚未到期
+    p.closeDate = p.expirationDate;
+    p.buyPrice = 0;
+    p.autoClosed = true;
+    changed = true;
+  });
+  if (changed) save();
+}
+
+// ----- Rendering -----
+function render() {
+  if (!currentUser) return;   // 未登入不繪製
+  applyAutoExpiry();   // 先把到期未平倉的自動結算，再繪製
+  renderMonthCalendar();
+  renderDashboard();
+  renderSummary();
+  renderMonthlySummary();
+  renderOpenPositions();
+  renderClosedPositions();
+}
+
+// ----- 本月剩餘天數日曆提示 + 期權持續期間連接條 -----
+function renderMonthCalendar() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-based
+  const todayDate = now.getDate();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysLeft = daysInMonth - todayDate;
+  const monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+
+  // 以週一為每週開始（週一…週日）
+  const weekHeads = ['一','二','三','四','五','六','日'];
+  const firstDow = (new Date(year, month, 1).getDay() + 6) % 7; // 週一=0…週日=6
+
+  // 網格第一格代表的日期（可能是上個月）
+  const gridStart = new Date(year, month, 1 - firstDow);
+  gridStart.setHours(12, 0, 0, 0);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const toIndex = (d) => Math.round((new Date(d + 'T12:00:00') - gridStart) / dayMs);
+
+  // 決定顯示幾週（5 或 6 週）：若第 6 週仍含本月日子才顯示
+  const lastCellDate = new Date(year, month, 1 - firstDow + 41);
+  const numWeeks = (lastCellDate.getMonth() === month && lastCellDate.getFullYear() === year) ? 6 : 5;
+  const totalCells = numWeeks * 7;
+
+  // 標記「該天有沒有做過交易」（開倉當天）
+  const openDates = {};
+  state.positions.forEach(p => {
+    if (p.openDate) openDates[p.openDate] = (openDates[p.openDate] || 0) + 1;
+  });
+
+  // === 建立每筆期權的連接條線段（依週切割）===
+  // 每筆 position 由 openDate → (closeDate 或 expirationDate) 佔用連續格子
+  const segsByWeek = Array.from({ length: numWeeks }, () => []);
+  state.positions.forEach(p => {
+    if (!p.openDate) return;
+    const endDateStr = p.closeDate || p.expirationDate || p.openDate;
+    let startIdx = toIndex(p.openDate);
+    let endIdx = toIndex(endDateStr);
+    if (endIdx < startIdx) endIdx = startIdx;
+    // 裁切到目前網格範圍
+    if (endIdx < 0 || startIdx > totalCells - 1) return; // 完全不在本月視圖
+    const clampStart = Math.max(0, startIdx);
+    const clampEnd = Math.min(totalCells - 1, endIdx);
+    const type = p.type === 'call' ? 'call' : 'put';
+    const totalDays = daysBetween(p.openDate, endDateStr) + 1;
+    const label = `${esc(p.stockName)} · ${totalDays}天`;
+    const stateCls = p.closeDate ? '' : ' open';
+    // 依週切割：同一條可能橫跨多週，每週一段
+    for (let idx = clampStart; idx <= clampEnd; ) {
+      const wk = Math.floor(idx / 7);
+      const colStart = idx % 7;
+      const weekEndIdx = wk * 7 + 6;
+      const segEnd = Math.min(clampEnd, weekEndIdx);
+      const span = segEnd - idx + 1;
+      const isRealStart = idx === startIdx;   // 真正的開倉日在這一段
+      const isRealEnd = segEnd === endIdx;     // 真正的結束日在這一段
+      segsByWeek[wk].push({
+        colStart, span, type, stateCls, label, isRealStart, isRealEnd,
+        tip: `${esc(p.stockName)}（${type === 'call' ? 'CALL' : 'PUT'}）${fmtDate(p.openDate)} → ${fmtDate(endDateStr)}，共 ${totalDays} 天${p.closeDate ? '（已平倉）' : '（持倉中）'}`,
+      });
+      idx = segEnd + 1;
+    }
+  });
+
+  // === 逐週建立 HTML ===
+  let weeksHtml = '';
+  for (let wk = 0; wk < numWeeks; wk++) {
+    // 日期格子
+    let daysHtml = '';
+    for (let col = 0; col < 7; col++) {
+      const idx = wk * 7 + col;
+      const cellDate = new Date(year, month, 1 - firstDow + idx);
+      const cy = cellDate.getFullYear(), cm = cellDate.getMonth(), cd = cellDate.getDate();
+      const inMonth = cm === month && cy === year;
+      const isWeekend = col >= 5;
+      const isToday = inMonth && cd === todayDate;
+      const isPast = inMonth && cd < todayDate;
+      const isFuture = inMonth && cd > todayDate;
+      const key = `${cy}-${String(cm + 1).padStart(2, '0')}-${String(cd).padStart(2, '0')}`;
+      const hasEvent = inMonth && openDates[key];
+      const holidayName = HK_HOLIDAYS[key];
+
+      let cls = 'cal-cell';
+      cls += inMonth ? ' in-month' : ' adjacent';
+      if (isWeekend) cls += ' weekend';
+      if (holidayName && inMonth) cls += ' holiday';
+      if (isPast) cls += ' past';
+      if (isFuture) cls += ' future';
+      if (isToday) cls += ' today';
+      if (hasEvent) cls += ' has-event';
+
+      const tips = [];
+      if (holidayName) tips.push(holidayName);
+      if (hasEvent) tips.push(`這天做過 ${openDates[key]} 筆交易`);
+      const tip = tips.length ? ` title="${tips.join('｜')}"` : '';
+      const holidayDot = (holidayName && inMonth) ? `<span class="cal-holiday-dot">●</span>` : '';
+      daysHtml += `<div class="${cls}"${tip}>${holidayDot}<span class="cal-num">${cd}</span></div>`;
+    }
+
+    // 連接條（可能多列堆疊，用貪心分配 lane）
+    const segs = segsByWeek[wk];
+    const lanes = []; // 每 lane 是該列已佔用的欄位
+    segs.forEach(s => {
+      let lane = lanes.findIndex(occupied => {
+        for (let c = s.colStart; c < s.colStart + s.span; c++) if (occupied[c]) return false;
+        return true;
+      });
+      if (lane === -1) { lane = lanes.length; lanes.push({}); }
+      for (let c = s.colStart; c < s.colStart + s.span; c++) lanes[lane][c] = true;
+      s.lane = lane;
+    });
+    let barsHtml = '';
+    segs.forEach(s => {
+      const radiusL = s.isRealStart ? '10px' : '2px';
+      const radiusR = s.isRealEnd ? '10px' : '2px';
+      const startDot = s.isRealStart ? '▶' : '';
+      const endDot = s.isRealEnd ? (s.stateCls ? '⏰' : '✔') : '';
+      barsHtml += `<div class="cal-bar-seg ${s.type}${s.stateCls}" title="${s.tip}" style="grid-column:${s.colStart + 1}/span ${s.span};grid-row:${s.lane + 1};border-radius:${radiusL} ${radiusR} ${radiusR} ${radiusL}">`
+        + `${startDot ? `<span>${startDot}</span>` : ''}`
+        + `<span style="overflow:hidden;text-overflow:ellipsis">${s.isRealStart ? s.label : ''}</span>`
+        + `${endDot ? `<span class="bar-end">${endDot}</span>` : ''}`
+        + `</div>`;
+    });
+
+    weeksHtml += `<div class="cal-week">
+      <div class="cal-week-days">${daysHtml}</div>
+      ${segs.length ? `<div class="cal-week-bars">${barsHtml}</div>` : ''}
+    </div>`;
+  }
+
+  document.getElementById('monthCalendar').innerHTML = `
+    <div class="month-calendar">
+      <div class="cal-top">
+        <div>
+          <div class="cal-title">📆 ${year} 年 ${monthNames[month]}</div>
+          <div class="cal-sub">今天是 ${fmtDate(today())}（本月第 ${todayDate} 天 / 共 ${daysInMonth} 天）</div>
+        </div>
+        <div class="cal-pills">
+          <div class="cal-pill passed">
+            <div class="n">${todayDate}</div>
+            <div class="t">已過天數</div>
+          </div>
+          <div class="cal-pill left">
+            <div class="n">${daysLeft}</div>
+            <div class="t">剩餘天數</div>
+          </div>
+        </div>
+      </div>
+      <div class="cal-grid">
+        <div class="cal-weekhead">${weekHeads.map((h, i) => `<div class="cal-cell cal-head${i >= 5 ? ' weekend' : ''}">${h}</div>`).join('')}</div>
+        ${weeksHtml}
+      </div>
+      <div class="cal-legend">
+        <span class="lg"><span class="sw" style="background:linear-gradient(135deg,#2962ff,#1e3a8a)"></span> 今天</span>
+        <span class="lg"><span class="sw" style="background:#eef1f5;border:1px solid #e3e8ef"></span> 已過去</span>
+        <span class="lg"><span class="sw" style="background:#f4f8ff;border:1px solid #dbe7ff"></span> 之後</span>
+        <span class="lg"><span class="sw" style="background:var(--red-bg);border:1px solid #fde0e0"></span> 週末</span>
+        <span class="lg"><span class="sw" style="background:#f5f0ff;border:1px solid #e6d9ff"></span> 節假日</span>
+        <span class="lg" style="width:100%;border-top:1px dashed var(--border);padding-top:8px;margin-top:2px"></span>
+        <span class="lg"><span class="sw put"></span> SHORT PUT 持續期間</span>
+        <span class="lg"><span class="sw call"></span> SHORT CALL 持續期間</span>
+        <span class="lg">▶ 開倉日</span>
+        <span class="lg">✔ 已平倉 / ⏰ 到期日</span>
+        <span class="lg">藍色數字底線＝這天做過交易</span>
+      </div>
+    </div>
+  `;
+}
+
+// ----- 月總結：把每個月份分開統計 -----
+function renderMonthlySummary() {
+  // 依「賣出月份（openDate）」分組所有交易
+  const groups = {};
+  state.positions.forEach(p => {
+    if (!p.openDate) return;
+    const key = p.openDate.slice(0, 7); // YYYY-MM
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(p);
+  });
+
+  const months = Object.keys(groups).sort((a, b) => b.localeCompare(a)); // 新月份在前
+  document.getElementById('monthlyCount').textContent = months.length > 0 ? `(${months.length} 個月)` : '';
+  const tbody = document.getElementById('monthlyBody');
+
+  if (months.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><div class="icon">📅</div>尚未有任何交易紀錄</div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = months.map(key => {
+    const list = groups[key];
+    const closeds = list.filter(p => p.closeDate);
+    const opens = list.filter(p => !p.closeDate);
+    const netPremium = closeds.reduce((s, p) => s + calc(p).netPremium, 0);
+    const commission = list.reduce((s, p) => s + toHKD(p, p.commission), 0);
+    const profit = closeds.reduce((s, p) => s + calc(p).profit, 0);
+    const wins = closeds.filter(p => calc(p).profit > 0).length;
+    const winRate = closeds.length > 0 ? (wins / closeds.length) * 100 : 0;
+    const profitCls = profit > 0 ? 'profit' : profit < 0 ? 'loss' : 'neutral';
+    const [y, m] = key.split('-');
+    return `
+      <tr>
+        <td><span class="stock-name">${y} / ${m}</span></td>
+        <td>${closeds.length}</td>
+        <td>${opens.length}</td>
+        <td>${HKD.format(netPremium)}</td>
+        <td>${HKD.format(commission)}</td>
+        <td class="${profitCls}">${HKD.format(profit)}</td>
+        <td>${closeds.length > 0 ? winRate.toFixed(0) + '%' : '—'}</td>
+      </tr>`;
+  }).join('');
+}
+
+function renderDashboard() {
+  const opens = state.positions.filter(p => !p.closeDate);
+  const closeds = state.positions.filter(p => p.closeDate);
+  const openPuts = opens.filter(p => (p.type || 'put') === 'put');
+  const openCalls = opens.filter(p => p.type === 'call');
+  const closedPuts = closeds.filter(p => (p.type || 'put') === 'put');
+  const closedCalls = closeds.filter(p => p.type === 'call');
+
+  const totalProfit = closeds.reduce((s, p) => s + calc(p).profit, 0);
+  const putProfit = closedPuts.reduce((s, p) => s + calc(p).profit, 0);
+  const callProfit = closedCalls.reduce((s, p) => s + calc(p).profit, 0);
+  const wins = closeds.filter(p => calc(p).profit > 0).length;
+  const winRate = closeds.length > 0 ? (wins / closeds.length) * 100 : 0;
+  const unrealized = opens.reduce((s, p) => s + calc(p).profit, 0);
+  const openStockCost = opens.reduce((s, p) => s + calc(p).stockCost, 0);
+  // 平均每張期權每天收入：每筆已平倉 = 淨期權金 / 持倉天 / 張數，再取平均（含虧損/平手單）
+  const dailyPerContractList = closeds
+    .map(p => {
+      const c = calc(p);
+      const contracts = +p.contracts || 0;
+      return contracts > 0 && c.holdingDays > 0 ? c.netPremium / c.holdingDays / contracts : null;
+    })
+    .filter(x => x !== null);  // 只剔除資料不全者，保留虧損與平手單，避免平均值虛增
+  const avgDailyPerContract = dailyPerContractList.length > 0
+    ? dailyPerContractList.reduce((s, x) => s + x, 0) / dailyPerContractList.length
+    : 0;
+  const dailyClass = avgDailyPerContract > 0 ? 'positive' : avgDailyPerContract < 0 ? 'negative' : '';
+  const totalHoldingDays = closeds.reduce((s, p) => s + calc(p).holdingDays, 0);
+
+  const profitClass = totalProfit > 0 ? 'positive' : totalProfit < 0 ? 'negative' : '';
+  const unrealizedClass = unrealized > 0 ? 'positive' : unrealized < 0 ? 'negative' : '';
+
+  document.getElementById('dashboard').innerHTML = `
+    <div class="stat-card">
+      <div class="label">已實現損益</div>
+      <div class="value ${profitClass}">${HKD.format(totalProfit)}</div>
+      <div class="sublabel">${closeds.length} 筆已平倉</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">勝率</div>
+      <div class="value">${closeds.length > 0 ? winRate.toFixed(1) + '%' : '—'}</div>
+      <div class="sublabel">${wins} 勝 / ${closeds.length - wins} 敗</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">未實現損益</div>
+      <div class="value ${unrealizedClass}">${HKD.format(unrealized)}</div>
+      <div class="sublabel">${opens.length} 筆持倉中</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">未平倉購買股票成本</div>
+      <div class="value">${HKD.format(openStockCost)}</div>
+      <div class="sublabel">${opens.length} 筆持倉中</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">平均每張期權每天收入</div>
+      <div class="value ${dailyClass}">${closeds.length > 0 ? HKD.format(avgDailyPerContract) : '—'}</div>
+      <div class="sublabel">累計持有 ${totalHoldingDays} 天 / ${closeds.length} 筆</div>
+    </div>
+  `;
+}
+
+function renderSummary() {
+  const opens = state.positions.filter(p => !p.closeDate);
+  const closeds = state.positions.filter(p => p.closeDate);
+  const openPuts = opens.filter(p => (p.type || 'put') === 'put').length;
+  const openCalls = opens.filter(p => p.type === 'call').length;
+  const totalCommission = state.positions.reduce((s, p) => s + toHKD(p, p.commission), 0);
+  const hasUSD = state.positions.some(p => p.currency === 'USD');
+  document.getElementById('summaryBar').innerHTML = `
+    <span>持倉中 <strong>${opens.length}</strong> 筆 (PUT <strong>${openPuts}</strong> / CALL <strong>${openCalls}</strong>)</span>
+    <span>已平倉 <strong>${closeds.length}</strong> 筆</span>
+    <span>總手續費 <strong>${HKD.format(totalCommission)}</strong></span>
+    ${hasUSD ? '<span style="color:var(--muted)">美元(USD)部位已 ×7.8 換算港幣顯示</span>' : ''}
+    <span style="color:var(--muted)">資料更新於 ${fmtDate(today())}</span>
+  `;
+}
+
+function expiryBadge(days) {
+  if (days < 0) return `<span class="badge badge-red">已過期 ${-days} 天</span>`;
+  if (days <= 7) return `<span class="badge badge-red">⚠ ${days} 天</span>`;
+  if (days <= 14) return `<span class="badge badge-yellow">${days} 天</span>`;
+  return `<span class="badge badge-gray">${days} 天</span>`;
+}
+
+function renderOpenPositions() {
+  const opens = state.positions.filter(p => !p.closeDate)
+    .sort((a, b) => new Date(a.expirationDate) - new Date(b.expirationDate));
+
+  document.getElementById('openCount').textContent = opens.length > 0 ? `(${opens.length})` : '';
+  const tbody = document.getElementById('openBody');
+  if (opens.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="15"><div class="empty-state"><div class="icon">📭</div>目前沒有持倉，按「＋ 新增交易」開始記錄</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = opens.map(p => {
+    const c = calc(p);
+    const typeBadge = c.type === 'call'
+      ? '<span class="badge badge-green">CALL</span>'
+      : '<span class="badge badge-blue">PUT</span>';
+    const curBadge = p.currency === 'USD' ? ' <span class="badge" style="background:#eef2ff;color:#4338ca">USD</span>' : '';
+    // 持貨成本 / 保本價欄：PUT 顯示「-」；CALL 顯示持貨成本 + 保本價
+    let holdingCell = '<td><span style="color:var(--muted)">—</span></td>';
+    if (c.type === 'call') {
+      if (c.holdingAnalysis) {
+        const h = c.holdingAnalysis;
+        const cov = h.covered ? '✓' : '⚠';
+        holdingCell = `<td>
+          <div>HK$${NUM.format(toHKD(p, p.holdingCost))} × ${NUM.format(h.holdingShares)} <span style="font-size:10px">${cov}</span></div>
+          <div style="font-size:10px;color:var(--muted)">保本 HK$${NUM.format(h.breakeven)}</div>
+        </td>`;
+      } else {
+        holdingCell = `<td><span style="color:var(--muted)">未填</span></td>`;
+      }
+    }
+    return `
+      <tr>
+        <td>${typeBadge}${curBadge}</td>
+        <td>
+          <div class="stock-name">${esc(p.stockName)}</div>
+          <div class="strike-info">行權價 ${NUM.format(toHKD(p, p.strikePrice))}</div>
+        </td>
+        <td>${fmtDate(p.openDate)}</td>
+        <td>${fmtDate(p.expirationDate)}</td>
+        <td>${expiryBadge(c.daysToExpiry)}</td>
+        <td>${NUM.format(p.contracts)}</td>
+        <td>${NUM.format(p.sharesPerContract)}</td>
+        <td>${NUM.format(toHKD(p, p.sellPrice))}</td>
+        <td class="profit">${HKD.format(c.sellPremium)}</td>
+        <td>${HKD.format(c.stockCost)}</td>
+        ${holdingCell}
+        <td>${c.holdingDays}</td>
+        <td class="profit">${HKD.format(c.perDay)}</td>
+        <td class="${c.profit >= 0 ? 'profit' : 'loss'}">${HKD.format(c.profit)}</td>
+        <td>
+          <div class="actions">
+            <button class="btn-success btn-sm" onclick="openCloseModal('${p.id}')">平倉</button>
+            <button class="btn-secondary btn-sm" onclick="openEditModal('${p.id}')">編輯</button>
+            <button class="btn-danger btn-sm" onclick="deletePosition('${p.id}')">刪除</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function renderClosedPositions() {
+  const closeds = state.positions.filter(p => p.closeDate)
+    .sort((a, b) => new Date(b.closeDate) - new Date(a.closeDate));
+
+  document.getElementById('closedCount').textContent = closeds.length > 0 ? `(${closeds.length})` : '';
+  const tbody = document.getElementById('closedBody');
+  if (closeds.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="14"><div class="empty-state"><div class="icon">📋</div>尚未有平倉紀錄</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = closeds.map(p => {
+    const c = calc(p);
+    const profitCls = c.profit > 0 ? 'profit' : c.profit < 0 ? 'loss' : 'neutral';
+    const typeBadge = c.type === 'call'
+      ? '<span class="badge badge-green">CALL</span>'
+      : '<span class="badge badge-blue">PUT</span>';
+    const curBadge = p.currency === 'USD' ? ' <span class="badge" style="background:#eef2ff;color:#4338ca">USD</span>' : '';
+    const autoBadge = p.autoClosed ? ' <span class="badge badge-gray" title="到期未到價自動平倉">到期</span>' : '';
+    return `
+      <tr>
+        <td>${typeBadge}${autoBadge}${curBadge}</td>
+        <td>
+          <div class="stock-name">${esc(p.stockName)}</div>
+          <div class="strike-info">行權價 ${NUM.format(toHKD(p, p.strikePrice))}</div>
+        </td>
+        <td>${fmtDate(p.openDate)}</td>
+        <td>${fmtDate(p.closeDate)}</td>
+        <td>${fmtDate(p.expirationDate)}</td>
+        <td>${c.holdingDays}</td>
+        <td>${NUM.format(p.contracts)}</td>
+        <td>${NUM.format(toHKD(p, p.sellPrice))}</td>
+        <td>${NUM.format(toHKD(p, p.buyPrice))}</td>
+        <td>${HKD.format(c.netPremium)}</td>
+        <td>${HKD.format(c.stockCost)}</td>
+        <td>${HKD.format(toHKD(p, p.commission))}</td>
+        <td class="${profitCls}">${HKD.format(c.profit)}</td>
+        <td class="${profitCls}">${c.returnPct.toFixed(2)}%</td>
+        <td>
+          <div class="actions">
+            <button class="btn-primary btn-sm" onclick="duplicatePosition('${p.id}')" title="複製此交易（保留股票/張數/股數/行權價）">📋 複製</button>
+            <button class="btn-secondary btn-sm" onclick="openEditModal('${p.id}')">編輯</button>
+            <button class="btn-danger btn-sm" onclick="deletePosition('${p.id}')">刪除</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function esc(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+// ----- CRUD -----
+function openNewModal(type) {
+  type = type || 'put';
+  showFormModal({
+    title: type === 'call' ? '新增 SHORT CALL（賣 Call）' : '新增 SHORT PUT（賣 Put）',
+    position: {
+      type,
+      currency: 'HKD',
+      stockName: '',
+      openDate: today(),
+      closeDate: '',
+      expirationDate: '',
+      strikePrice: '',
+      sellPrice: '',
+      buyPrice: '',
+      contracts: '',
+      sharesPerContract: 1000,
+      commission: 0,
+      holdingCost: 0,
+      holdingShares: 0
+    },
+    saveLabel: '儲存',
+    onSave: (data) => {
+      data.id = uid();
+      state.positions.push(data);
+      save();
+      render();
+      showToast(data.type === 'call' ? '已新增 Short Call' : '已新增 Short Put', 'success');
+    }
+  });
+}
+
+// 保留向後相容
+function openAddModal() { openNewModal('put'); }
+
+function openEditModal(id) {
+  const p = state.positions.find(x => x.id === id);
+  if (!p) return;
+  showFormModal({
+    title: p.type === 'call' ? '編輯 SHORT CALL' : '編輯 SHORT PUT',
+    position: { ...p },
+    saveLabel: '更新',
+    onSave: (data) => {
+      Object.assign(p, data);
+      save();
+      render();
+      showToast('已更新', 'success');
+    }
+  });
+}
+
+function openCloseModal(id) {
+  const p = state.positions.find(x => x.id === id);
+  if (!p) return;
+  const c = calc(p);
+  showFormModal({
+    title: `平倉 — ${esc(p.stockName)}`,
+    position: {
+      ...p,
+      closeDate: today(),
+      buyPrice: '',
+      commission: p.commission || 0
+    },
+    closeMode: true,
+    saveLabel: '確認平倉',
+    onSave: (data) => {
+      Object.assign(p, data);
+      save();
+      render();
+      showToast('已平倉', 'success');
+    }
+  });
+}
+
+function deletePosition(id) {
+  const p = state.positions.find(x => x.id === id);
+  if (!p) return;
+  if (!confirm(`確定刪除「${p.stockName}」這筆交易嗎？此操作無法復原。`)) return;
+  state.positions = state.positions.filter(x => x.id !== id);
+  save();
+  render();
+  showToast('已刪除');
+}
+
+// 複製已平倉交易：保留股票/張數/股數/行權價等固定資訊，重新填寫日期與價格
+function duplicatePosition(id) {
+  const p = state.positions.find(x => x.id === id);
+  if (!p) return;
+  showFormModal({
+    title: `複製「${esc(p.stockName)}」— 新 ${p.type === 'call' ? 'CALL' : 'PUT'} 交易`,
+    position: {
+      type: p.type,
+      stockName: p.stockName,
+      openDate: today(),
+      closeDate: '',
+      expirationDate: '',
+      currency: p.currency || 'HKD',
+      strikePrice: p.strikePrice,
+      sellPrice: '',
+      buyPrice: '',
+      contracts: p.contracts,
+      sharesPerContract: p.sharesPerContract,
+      commission: 0
+    },
+    saveLabel: '建立新交易',
+    onSave: (data) => {
+      data.id = uid();
+      state.positions.push(data);
+      save();
+      render();
+      showToast('已從舊交易複製並建立新交易', 'success');
+    }
+  });
+}
+
+// ----- Form modal -----
+function showFormModal({ title, position, saveLabel, onSave, closeMode }) {
+  const container = document.getElementById('modalContainer');
+  container.innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>${title}</h2>
+          <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="form-field full">
+              <label>類型 *</label>
+              <div class="radio-group">
+                <label class="radio-label"><input type="radio" name="f_type" value="put" ${(position.type || 'put') === 'put' ? 'checked' : ''}> SHORT PUT（看跌/接貨）</label>
+                <label class="radio-label"><input type="radio" name="f_type" value="call" ${position.type === 'call' ? 'checked' : ''}> SHORT CALL（看漲/交貨）</label>
+              </div>
+              <div class="form-hint">PUT 適合股票下跌時進場；CALL 適合已持股時鎖利潤</div>
+            </div>
+            <div class="form-field full">
+              <label>計價幣別 *</label>
+              <div class="radio-group">
+                <label class="radio-label"><input type="radio" name="f_currency" value="HKD" ${(position.currency || 'HKD') === 'HKD' ? 'checked' : ''}> 港幣 HKD</label>
+                <label class="radio-label"><input type="radio" name="f_currency" value="USD" ${position.currency === 'USD' ? 'checked' : ''}> 美元 USD（自動 ×7.8 換算港幣）</label>
+              </div>
+              <div class="form-hint" id="curHint">價格以港幣 HKD 輸入</div>
+            </div>
+            <div class="form-field full">
+              <label>股票名稱 *</label>
+              <input type="text" id="f_stockName" value="${esc(position.stockName)}" placeholder="例如：騰訊、HSI、388" required>
+            </div>
+            <div class="form-field">
+              <label>賣出日期（開倉）*</label>
+              <input type="date" id="f_openDate" value="${position.openDate || ''}">
+            </div>
+            <div class="form-field">
+              <label>到期日 *</label>
+              <input type="date" id="f_expirationDate" value="${position.expirationDate || ''}">
+            </div>
+            ${closeMode ? '' : `
+            <div class="form-field">
+              <label>買入日期（平倉；留空=持倉中）</label>
+              <input type="date" id="f_closeDate" value="${position.closeDate || ''}">
+            </div>
+            `}
+            <div id="holdingCostSection" style="display:${(position.type || 'put') === 'call' ? 'contents' : 'none'};grid-column:1/-1">
+              <div class="form-field">
+                <label>持貨 — 每股成本 <span class="cur-tag">HK$</span> <span style="color:var(--muted);font-weight:normal">（CALL 專用）</span></label>
+                <input type="number" id="f_holdingCost" value="${position.holdingCost || ''}" step="0.01" min="0" placeholder="例如 50.5">
+                <div class="form-hint">你用這價位買的股票（寫入才能算保本價）</div>
+              </div>
+              <div class="form-field">
+                <label>已持有股數 <span style="color:var(--muted);font-weight:normal">（CALL 專用）</span></label>
+                <input type="number" id="f_holdingShares" value="${position.holdingShares || ''}" step="1" min="0" placeholder="例如 1000">
+                <div class="form-hint">實際持有的股數（需 ≥ 張數×每張股數）</div>
+              </div>
+            </div>
+            <div class="form-field">
+              <label>行權價 <span class="cur-tag">HK$</span> *</label>
+              <input type="number" id="f_strikePrice" value="${position.strikePrice}" step="0.01" min="0" placeholder="例如 300">
+            </div>
+            <div class="form-field">
+              <label>張數 *</label>
+              <input type="number" id="f_contracts" value="${position.contracts}" step="1" min="1" placeholder="例如 10">
+            </div>
+            <div class="form-field">
+              <label>每張股數 *</label>
+              <input type="number" id="f_sharesPerContract" value="${position.sharesPerContract}" step="1" min="1" placeholder="HK 市場：例如 1000">
+              <div class="form-hint">HK 股票常見：500、1000、2000、5000</div>
+            </div>
+            <div class="form-field">
+              <label>賣出價（每股期權金，<span class="cur-tag">HK$</span>）*</label>
+              <input type="number" id="f_sellPrice" value="${position.sellPrice}" step="0.001" min="0" placeholder="例如 5">
+            </div>
+            <div class="form-field">
+              <label>${closeMode ? '買入價（每股，<span class="cur-tag">HK$</span>）*' : '買入價（每股，<span class="cur-tag">HK$</span>；留空=持倉中）'}</label>
+              <input type="number" id="f_buyPrice" value="${position.buyPrice}" step="0.001" min="0" placeholder="${closeMode ? '例如 1' : '平倉時填入'}">
+            </div>
+            <div class="form-field">
+              <label>手續費 <span class="cur-tag">HK$</span></label>
+              <input type="number" id="f_commission" value="${position.commission || 0}" step="0.01" min="0">
+            </div>
+          </div>
+          <div class="preview-box" id="previewBox">
+            <h3>即時試算</h3>
+            <div class="preview-grid" id="previewGrid"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="closeModal()">取消</button>
+          <button class="btn-primary" id="saveBtn">${saveLabel}</button>
+        </div>
+      </div>
+    </div>
+  `;
+  updatePreview();
+  ['f_stockName','f_openDate','f_expirationDate','f_closeDate','f_strikePrice',
+   'f_contracts','f_sharesPerContract','f_sellPrice','f_buyPrice','f_commission',
+   'f_holdingCost','f_holdingShares']
+    .forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('input', updatePreview);
+    });
+  document.querySelectorAll('input[name="f_type"]').forEach(el => {
+    el.addEventListener('change', () => {
+      // 切換類型時顯示/隱藏持貨區
+      const isCall = el.value === 'call' && el.checked;
+      const otherRadio = document.querySelector('input[name="f_type"][value!="' + el.value + '"]');
+      const showHolding = (isCall || (otherRadio && otherRadio.value === 'call' && otherRadio.checked));
+      const section = document.getElementById('holdingCostSection');
+      if (section) section.style.display = showHolding ? 'contents' : 'none';
+      updatePreview();
+    });
+  });
+
+  // 幣別切換：把已填的價格欄位在 HKD<->USD 間換算（保留金額意義），並更新標籤
+  const PRICE_FIELD_IDS = ['f_strikePrice','f_sellPrice','f_buyPrice','f_holdingCost','f_commission'];
+  function convertPriceFields(fromCur, toCur) {
+    PRICE_FIELD_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el || el.value === '') return;
+      const v = +el.value;
+      if (isNaN(v)) return;
+      const hkd = v * (fromCur === 'USD' ? USD_HKD_RATE : 1);
+      const newVal = hkd / (toCur === 'USD' ? USD_HKD_RATE : 1);
+      el.value = Math.round(newVal * 10000) / 10000;  // 避免浮點雜訊
+    });
+  }
+  function refreshCurrencyLabels() {
+    const curEl = document.querySelector('input[name="f_currency"]:checked');
+    const cur = curEl ? curEl.value : 'HKD';
+    document.querySelectorAll('.cur-tag').forEach(el => el.textContent = cur === 'USD' ? 'US$' : 'HK$');
+    const hint = document.getElementById('curHint');
+    if (hint) hint.textContent = cur === 'USD'
+      ? '價格以美元 USD 輸入，自動 ×7.8 換算港幣顯示'
+      : '價格以港幣 HKD 輸入';
+  }
+  document.querySelectorAll('input[name="f_currency"]').forEach(el => {
+    el.addEventListener('change', () => {
+      const newCur = el.value;
+      const otherEl = document.querySelector('input[name="f_currency"]:not(:checked)');
+      const oldCur = otherEl ? otherEl.value : 'HKD';
+      if (newCur !== oldCur) convertPriceFields(oldCur, newCur);
+      refreshCurrencyLabels();
+      updatePreview();
+    });
+  });
+  refreshCurrencyLabels();
+
+  // 日期欄位：支援直接輸入 6 位數字（YYMMDD）或 8 位數字（YYYYMMDD）自動格式化
+  ['f_openDate','f_expirationDate','f_closeDate'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      const digits = el.value.replace(/\D/g, '');
+      let formatted = null;
+      if (digits.length === 6) {
+        const yy = +digits.slice(0, 2);
+        const mm = +digits.slice(2, 4);
+        const dd = +digits.slice(4, 6);
+        if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+          const year = yy < 50 ? 2000 + yy : 1900 + yy;
+          formatted = `${year}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
+        }
+      } else if (digits.length === 8 && digits.slice(0, 4) >= '1900') {
+        const mm = +digits.slice(4, 6);
+        const dd = +digits.slice(6, 8);
+        if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+          formatted = `${digits.slice(0,4)}-${digits.slice(4,6)}-${digits.slice(6,8)}`;
+        }
+      }
+      if (formatted) el.value = formatted;
+      updatePreview();
+    });
+    // 失焦時若仍是 6 位數字也補上格式
+    el.addEventListener('blur', () => {
+      const digits = el.value.replace(/\D/g, '');
+      if (digits.length === 6) {
+        const yy = +digits.slice(0, 2);
+        const mm = +digits.slice(2, 4);
+        const dd = +digits.slice(4, 6);
+        if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+          const year = yy < 50 ? 2000 + yy : 1900 + yy;
+          el.value = `${year}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
+        }
+      }
+    });
+  });
+  document.getElementById('saveBtn').addEventListener('click', () => {
+    const stockName = document.getElementById('f_stockName').value.trim();
+    const openDate = document.getElementById('f_openDate').value;
+    const expirationDate = document.getElementById('f_expirationDate').value;
+    const closeDateEl = document.getElementById('f_closeDate');
+    const closeDate = closeMode ? today() : (closeDateEl ? closeDateEl.value : '');
+    const strikePrice = +document.getElementById('f_strikePrice').value;
+    const typeEl = document.querySelector('input[name="f_type"]:checked');
+    const type = typeEl ? typeEl.value : 'put';
+    const curEl = document.querySelector('input[name="f_currency"]:checked');
+    const currency = curEl ? curEl.value : 'HKD';
+    const contracts = +document.getElementById('f_contracts').value;
+    const sharesPerContract = +document.getElementById('f_sharesPerContract').value;
+    const sellPrice = +document.getElementById('f_sellPrice').value;
+    const buyPrice = +document.getElementById('f_buyPrice').value || 0;
+    const commission = +document.getElementById('f_commission').value || 0;
+    const holdingCost = +document.getElementById('f_holdingCost')?.value || 0;
+    const holdingShares = +document.getElementById('f_holdingShares')?.value || 0;
+
+    if (!stockName) return showToast('請輸入股票名稱', 'error');
+    if (!openDate) return showToast('請輸入賣出日期', 'error');
+    if (!expirationDate) return showToast('請輸入到期日', 'error');
+    if (!strikePrice || strikePrice <= 0) return showToast('請輸入行權價', 'error');
+    if (!contracts || contracts <= 0) return showToast('請輸入張數', 'error');
+    if (!sharesPerContract || sharesPerContract <= 0) return showToast('請輸入每張股數', 'error');
+    if (!sellPrice || sellPrice < 0) return showToast('請輸入賣出價', 'error');
+    if (closeMode && (!document.getElementById('f_buyPrice').value || buyPrice < 0)) {
+      return showToast('平倉時請輸入買入價', 'error');
+    }
+    if (closeDate && closeDate < openDate) return showToast('買入日不可早於賣出日', 'error');
+
+    onSave({
+      type, currency, stockName, openDate, closeDate: closeDate || null,
+      expirationDate, strikePrice, contracts,
+      sharesPerContract, sellPrice, buyPrice, commission,
+      holdingCost, holdingShares,
+      autoClosed: false   // 手動儲存即視為人工處理過，清除自動平倉標記
+    });
+    closeModal();
+  });
+}
+
+function updatePreview() {
+  const typeEl = document.querySelector('input[name="f_type"]:checked');
+  const type = typeEl ? typeEl.value : 'put';
+  const data = {
+    type,
+    currency: (document.querySelector('input[name="f_currency"]:checked')?.value) || 'HKD',
+    stockName: document.getElementById('f_stockName')?.value || '',
+    openDate: document.getElementById('f_openDate')?.value || today(),
+    closeDate: document.getElementById('f_closeDate')?.value || null,
+    expirationDate: document.getElementById('f_expirationDate')?.value || '',
+    strikePrice: +document.getElementById('f_strikePrice')?.value || 0,
+    contracts: +document.getElementById('f_contracts')?.value || 0,
+    sharesPerContract: +document.getElementById('f_sharesPerContract')?.value || 0,
+    sellPrice: +document.getElementById('f_sellPrice')?.value || 0,
+    buyPrice: +document.getElementById('f_buyPrice')?.value || 0,
+    commission: +document.getElementById('f_commission')?.value || 0,
+    holdingCost: +document.getElementById('f_holdingCost')?.value || 0,
+    holdingShares: +document.getElementById('f_holdingShares')?.value || 0,
+  };
+  const c = calc(data);
+  const dte = data.expirationDate ? daysBetween(today(), data.expirationDate) : null;
+  const typeLabel = type === 'call' ? 'SHORT CALL（交貨）' : 'SHORT PUT（接貨）';
+  const stockLabel = type === 'call' ? '股票交貨收入（被指派）' : '股票購買成本（被指派）';
+  const netLabel = type === 'call' ? '淨股票收益（加期權金）' : '淨股票成本（扣期權金）';
+
+  let holdingHtml = '';
+  if (type === 'call' && c.holdingAnalysis) {
+    const h = c.holdingAnalysis;
+    const coverageWarn = h.covered ? '' : ' <span class="loss">⚠ 持股不足</span>';
+
+    // === 情境分析：3 種結局 ===
+    // 1. 被指派：以行權價賣出（已含 premium）
+    // 2. 到期未指派：保留股票，premium 抵成本
+    // 3. 現在平倉（買回）：期權金收入 - 平倉成本
+    const plAssigned = h.netHoldingPL;  // 被指派
+    // 保留股票的情境：未來股價不變，但 effective cost 降低
+    // 損益等於 premium - 手續費（如果不算股價變動）
+    const plKeepStock = c.profit;  // 只算 premium 損益
+    // 現在平倉：若用 buyPrice 0 表示沒填，需明確顯示
+    const plCloseNow = data.buyPrice > 0
+      ? toHKD(data, (data.sellPrice - data.buyPrice) * data.sharesPerContract * data.contracts - (data.commission || 0))
+      : null;
+
+    const rows = [
+      { label: '每股持貨成本', val: NUM.format(toHKD(data, data.holdingCost)) },
+      { label: '已持有股數', val: NUM.format(data.holdingShares) + coverageWarn },
+      { label: '持股總成本', val: HKD.format(h.holdingTotalCost) },
+      { label: '保本價', val: NUM.format(h.breakeven), note: '到期後有效成本' },
+      { label: '行權價賣出收入', val: HKD.format(h.soldRevenue) },
+      { label: '加 premium 總收入', val: HKD.format(h.soldTotalRevenue) },
+    ];
+
+    let scenarioHtml = `
+      <div class="label" style="grid-column:1/-1;color:var(--accent);font-weight:600;border-top:1px solid var(--border);padding-top:8px;margin-top:4px">📦 持貨分析</div>
+    `;
+    rows.forEach(r => {
+      scenarioHtml += `<div class="label">${r.label}</div><div class="val">${r.val}${r.note ? ` <span style="font-size:10px;color:var(--muted)">${r.note}</span>` : ''}</div>`;
+    });
+
+    // 預期利潤三情境
+    scenarioHtml += `
+      <div class="label" style="grid-column:1/-1;color:var(--accent);font-weight:600;border-top:1px dashed var(--border);padding-top:8px;margin-top:6px">💰 預期利潤（淨損益）</div>
+      <div class="label">① 被指派（股價 ≥ ${NUM.format(toHKD(data, data.strikePrice))}）</div>
+      <div class="val ${plAssigned >= 0 ? 'profit' : 'loss'}">${HKD.format(plAssigned)}</div>
+      <div class="label">② 保留股票（premium 抵成本）</div>
+      <div class="val ${plKeepStock >= 0 ? 'profit' : 'loss'}">${HKD.format(plKeepStock)}</div>
+    `;
+    if (plCloseNow !== null) {
+      scenarioHtml += `<div class="label">③ 現在平倉（買回 @ ${NUM.format(toHKD(data, data.buyPrice))}）</div><div class="val ${plCloseNow >= 0 ? 'profit' : 'loss'}">${HKD.format(plCloseNow)}</div>`;
+    } else {
+      scenarioHtml += `<div class="label">③ 現在平倉</div><div class="val" style="color:var(--muted)">填入買入價試算</div>`;
+    }
+
+    // === 快速平倉試算器：多個價格點的損益 ===
+    // 用戶改變 input 立即更新
+    scenarioHtml += `
+      <div class="label" style="grid-column:1/-1;color:var(--accent);font-weight:600;border-top:1px dashed var(--border);padding-top:8px;margin-top:6px">⚡ 快速平倉試算（輸入假設買回價）</div>
+      <div class="label" style="grid-column:1/-1;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span style="flex:0 0 auto;font-weight:600">買回價 =</span>
+        <input type="number" id="f_buyPriceTest" value="${data.buyPrice || ''}" step="0.001" min="0" placeholder="例如 0.5" style="flex:1;min-width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">
+        <span style="color:var(--muted);font-size:11px">每股（${data.currency || 'HKD'}）</span>
+        <button type="button" class="btn-secondary btn-sm" onclick="setTestPrice(0)" style="padding:2px 6px;font-size:11px">0</button>
+        <button type="button" class="btn-secondary btn-sm" onclick="setTestPrice(${data.sellPrice * 0.5})" style="padding:2px 6px;font-size:11px">50%</button>
+        <button type="button" class="btn-secondary btn-sm" onclick="setTestPrice(${data.sellPrice * 0.7})" style="padding:2px 6px;font-size:11px">70%</button>
+        <button type="button" class="btn-secondary btn-sm" onclick="setTestPrice(${data.sellPrice})" style="padding:2px 6px;font-size:11px">100%</button>
+      </div>
+      <div class="label" style="grid-column:1/-1;font-size:12px;background:#fffbeb;padding:8px;border-radius:4px;border:1px dashed #fbbf24">
+        <div>試算結果 → <span id="testPlResult">輸入買回價試算</span></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">扣除：持貨成本 ${HKD.format(c.holdingAnalysis.holdingTotalCost)} + 手續費 ${HKD.format(toHKD(data, data.commission))}</div>
+      </div>
+    `;
+
+    holdingHtml = scenarioHtml;
+  }
+
+  document.getElementById('previewGrid').innerHTML = `
+    <div class="label" style="grid-column:1/-1;color:var(--accent);font-weight:600">${typeLabel} <span style="font-size:11px;color:var(--muted);font-weight:normal">（計價 ${data.currency || 'HKD'}${data.currency === 'USD' ? ' · ×7.8 港幣' : ''}）</span></div>
+    <div class="label">賣出期權金</div><div class="val profit">${HKD.format(c.sellPremium)}</div>
+    <div class="label">買入期權金</div><div class="val loss">${HKD.format(c.buyPremium)}</div>
+    <div class="label">淨期權金</div><div class="val">${HKD.format(c.netPremium)}</div>
+    <div class="label">手續費後 P&L</div><div class="val ${c.profit >= 0 ? 'profit' : 'loss'}">${HKD.format(c.profit)}</div>
+    <div class="label">${stockLabel}</div><div class="val">${HKD.format(c.stockCost)}</div>
+    <div class="label">${netLabel}</div><div class="val">${HKD.format(c.netStockCost)}</div>
+    <div class="label">報酬率</div><div class="val ${c.returnPct >= 0 ? 'profit' : 'loss'}">${c.returnPct.toFixed(2)}%</div>
+    <div class="label">持倉天數</div><div class="val">${c.holdingDays} 天</div>
+    <div class="label">每天收期權金</div><div class="val profit">${HKD.format(c.perDay)}</div>
+    ${dte !== null ? `
+      <div class="label">到期剩餘天數</div>
+      <div class="val">${dte >= 0 ? dte + ' 天' : '<span class="loss">已過期 ' + (-dte) + ' 天</span>'}</div>
+    ` : ''}
+    ${holdingHtml}
+  `;
+
+  // 綁定快速平倉試算器的 input 事件
+  const testInput = document.getElementById('f_buyPriceTest');
+  if (testInput) {
+    testInput.addEventListener('input', () => {
+      const testBuyPrice = +testInput.value || 0;
+      const testResultEl = document.getElementById('testPlResult');
+      if (!testResultEl) return;
+      if (testBuyPrice > 0 && data.sellPrice > 0 && data.contracts > 0 && data.sharesPerContract > 0) {
+        // 期權金損益：(賣出 - 買回) × 股數 - 手續費
+        const optionPL = toHKD(data, (data.sellPrice - testBuyPrice) * data.sharesPerContract * data.contracts - (data.commission || 0));
+        // 持貨損益：原本持貨若要賣，賣價 = 買回價（同樣條件）→ 持貨沒賺沒虧（你用平倉價當賣出參考）
+        // 對 call seller：平倉 = 買回期權。持貨沒動。
+        // 所以純期權損益 = 上面算的
+        const sign = optionPL >= 0 ? '+' : '';
+        const cls = optionPL >= 0 ? 'profit' : 'loss';
+        testResultEl.innerHTML = `<strong class="${cls}">${sign}${HKD.format(optionPL)}</strong> <span style="font-size:11px;color:var(--muted)">（淨期權金損益，扣 ${HKD.format(toHKD(data, data.commission))} 手續費）</span>`;
+      } else {
+        testResultEl.innerHTML = '<span style="color:var(--muted)">輸入買回價試算</span>';
+      }
+    });
+  }
+}
+
+function closeModal() {
+  document.getElementById('modalContainer').innerHTML = '';
+}
+
+// 快速平倉試算器：按鈕點擊設定買回價並觸發試算
+function setTestPrice(price) {
+  const input = document.getElementById('f_buyPriceTest');
+  if (!input) return;
+  input.value = price.toFixed(3);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// ----- Import / Export -----
+function exportData() {
+  const json = JSON.stringify(state, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `options-tracker-${today()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('已匯出 JSON', 'success');
+}
+
+function importData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      if (!parsed.positions || !Array.isArray(parsed.positions)) {
+        throw new Error('檔案格式不正確');
+      }
+      if (!confirm(`匯入 ${parsed.positions.length} 筆交易？\n（將合併到現有資料，不會清空）`)) return;
+      const existingIds = new Set(state.positions.map(p => p.id));
+      parsed.positions.forEach(p => {
+        if (!existingIds.has(p.id)) state.positions.push(p);
+      });
+      save();
+      render();
+      showToast(`已匯入 ${parsed.positions.length} 筆`, 'success');
+    } catch (err) {
+      showToast('匯入失敗：' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+// ----- Toast -----
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.className = 'toast', 2200);
+}
+
+// ----- Auth (Supabase) -----
+function authShowError(msg) {
+  const el = document.getElementById('authError');
+  if (el) el.textContent = msg;
+}
+async function authLogin() {
+  authShowError('');
+  if (!sb) { authShowError('Supabase 未載入，請重新整理頁面'); return; }
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  if (!email || !password) { authShowError('請輸入電郵和密碼'); return; }
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) authShowError('登入失敗：' + (error.message || error));
+    // 成功的話 onAuthStateChange 會接手顯示 app
+  } catch (e) {
+    authShowError('登入錯誤：' + (e.message || e));
+  }
+}
+async function authSignUp() {
+  authShowError('');
+  if (!sb) { authShowError('Supabase 未載入，請重新整理頁面'); return; }
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  if (!email || !password) { authShowError('請輸入電郵和密碼'); return; }
+  if (password.length < 6) { authShowError('密碼至少 6 個字'); return; }
+  try {
+    const { data, error } = await sb.auth.signUp({ email, password });
+    if (error) { authShowError('註冊失敗：' + (error.message || error)); return; }
+    if (data.user && data.session == null) {
+      authShowError('註冊成功！請去信箱點確認連結，再回來登入。');
+    } else {
+      authShowError('註冊成功，已自動登入。');
+    }
+  } catch (e) {
+    authShowError('註冊錯誤：' + (e.message || e));
+  }
+}
+async function authLogout() {
+  await sb.auth.signOut();
+  // onAuthStateChange 會接手顯示登入頁
+}
+function showApp(user) {
+  currentUser = user;
+  document.body.classList.add('authed');
+  const box = document.getElementById('userBox');
+  const emailEl = document.getElementById('userEmail');
+  if (box) box.style.display = 'flex';
+  if (emailEl) emailEl.textContent = user.email || '';
+  // 「匯入本機舊資料」按鈕：只有本機有舊資料時才顯示
+  const localBtn = document.getElementById('importLocalBtn');
+  if (localBtn) localBtn.style.display = localStorage.getItem(STORAGE_KEY) ? '' : 'none';
+}
+function showAuth() {
+  currentUser = null;
+  state = { positions: [] };
+  document.body.classList.remove('authed');
+  const box = document.getElementById('userBox');
+  if (box) box.style.display = 'none';
+}
+// 把瀏覽器 localStorage 的舊資料搬進雲端
+async function importLocalData() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) { showToast('本機沒有舊資料', 'error'); return; }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.positions) || parsed.positions.length === 0) {
+      showToast('本機沒有可匯入的資料', 'error'); return;
+    }
+    if (!confirm(`把本機 ${parsed.positions.length} 筆資料匯入雲端？\n（會和雲端現有資料合併，不會重複）`)) return;
+    const existingIds = new Set(state.positions.map(p => p.id));
+    let added = 0;
+    parsed.positions.forEach(p => {
+      if (!existingIds.has(p.id)) { state.positions.push(p); added++; }
+    });
+    await save();
+    render();
+    if (confirm(`已匯入 ${added} 筆到雲端。要清掉本機瀏覽器的舊資料嗎？\n（建議清掉避免混淆）`)) {
+      localStorage.removeItem(STORAGE_KEY);
+      const btn = document.getElementById('importLocalBtn');
+      if (btn) btn.style.display = 'none';
+    }
+    showToast(`已匯入 ${added} 筆`, 'success');
+  } catch (e) {
+    showToast('匯入失敗：' + (e.message || e), 'error');
+  }
+}
+
+// ----- Init -----
+// 全域錯誤捕捉：任何 JS 錯誤都顯示在登入畫面上，方便除錯
+window.addEventListener('error', (e) => {
+  console.error('JS error:', e.message, e.filename, e.lineno);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = (e.reason && (e.reason.message || e.reason)) || '未知錯誤';
+  console.error('Unhandled rejection:', msg);
+  authShowError('發生錯誤：' + msg);
+});
+// 用 onAuthStateChange 驅動：登入成功才 load + render
+if (sb) {
+  sb.auth.onAuthStateChange((event, session) => {
+    if (session && session.user) {
+      showApp(session.user);
+      load().then(render);
+    } else {
+      showAuth();
+    }
+  });
+}
+// Auto-refresh dashboard once a minute (for days-to-expiry updates)
+setInterval(() => { if (currentUser) render(); }, 60_000);
+</script>
+
+</body>
+</html>

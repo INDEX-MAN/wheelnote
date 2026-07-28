@@ -1,0 +1,6 @@
+# 忽略全部，只追蹤網站需要的檔案
+# （避免把 PDF、xlsx、docs/、年報/ 等非網站檔傳上 GitHub）
+*
+!index.html
+!supabase-js.js
+!.gitignore
