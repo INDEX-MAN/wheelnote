@@ -142,9 +142,10 @@
     background: #fff; color: var(--muted); font-size: 12px; cursor: pointer; transition: all 0.15s;
   }
   .cal-reset-btn:hover { color: var(--accent); border-color: var(--accent); }
-  /* 第二個月稍微染色，區分兩個月（不覆蓋 today）*/
-  .cal-cell.cal-m2.in-month:not(.today).future { background: #eef2fb; border-color: #d8e0ee; }
-  .cal-cell.cal-m2.in-month:not(.today).past { background: #e9ebf1; border-color: #dde0e6; }
+  /* 兩個月份方框並排，各自有框 */
+  .cal-months { display: flex; gap: 14px; flex-wrap: wrap; }
+  .cal-month-frame { flex: 1 1 320px; min-width: 300px; border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: #fff; box-shadow: var(--shadow); }
+  .cal-month-title { font-size: 15px; font-weight: 700; text-align: center; margin-bottom: 10px; color: var(--accent); }
   .cal-sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
   .cal-pills { display: flex; gap: 12px; }
   .cal-pill {
@@ -900,8 +901,8 @@ function renderMonthCalendar() {
   const eM = (sM + 1) % 12;
   const eY = sM + 1 >= 12 ? sY + 1 : sY;
   const titleStr = sY === eY
-    ? `${sY} 年 ${monthNames[sM]} - ${monthNames[eM]}`
-    : `${sY} 年 ${monthNames[sM]} - ${eY} 年 ${monthNames[eM]}`;
+    ? `${sY} / ${sM + 1} - ${eM + 1}`
+    : `${sY} / ${sM + 1} - ${eY} / ${eM + 1}`;
 
   // 網格第一格 = 起始月 1 號往前推到週一
   const firstDow = (new Date(sY, sM, 1).getDay() + 6) % 7; // 週一=0…週日=6
@@ -1050,9 +1051,9 @@ function renderMonthCalendar() {
           </div>
         </div>
       </div>
-      <div class="cal-grid">
-        <div class="cal-weekhead">${weekHeads.map((h, i) => `<div class="cal-cell cal-head${i >= 5 ? ' weekend' : ''}">${h}</div>`).join('')}</div>
-        ${weeksHtml}
+      <div class="cal-months">
+        ${renderOneMonthGrid(sY, sM, todayStr, openDates)}
+        ${renderOneMonthGrid(eY, eM, todayStr, openDates)}
       </div>
       <div class="cal-legend">
         <span class="lg"><span class="sw" style="background:linear-gradient(135deg,#2962ff,#1e3a8a)"></span> 今天</span>
@@ -1069,6 +1070,124 @@ function renderMonthCalendar() {
       </div>
     </div>
   `;
+}
+
+// 渲染單一月份方框（含日期格 + 期權時間條，裁切到本月範圍）
+function renderOneMonthGrid(year, month, todayStr, openDates) {
+  const weekHeads = ['一','二','三','四','五','六','日'];
+  const firstDow = (new Date(year, month, 1).getDay() + 6) % 7; // 週一=0…週日=6
+  const gridStart = new Date(year, month, 1 - firstDow);
+  gridStart.setHours(12, 0, 0, 0);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const toIndex = (d) => Math.round((new Date(d + 'T12:00:00') - gridStart) / dayMs);
+  // 5 或 6 週
+  const lastCellDate = new Date(year, month, 1 - firstDow + 41);
+  const numWeeks = (lastCellDate.getMonth() === month && lastCellDate.getFullYear() === year) ? 6 : 5;
+  const totalCells = numWeeks * 7;
+
+  // 建立期權連接條（依週切割，裁切到本月網格）
+  const segsByWeek = Array.from({ length: numWeeks }, () => []);
+  state.positions.forEach(p => {
+    if (!p.openDate) return;
+    const endDateStr = p.closeDate || p.expirationDate || p.openDate;
+    let startIdx = toIndex(p.openDate);
+    let endIdx = toIndex(endDateStr);
+    if (endIdx < startIdx) endIdx = startIdx;
+    if (endIdx < 0 || startIdx > totalCells - 1) return; // 完全不在本月視圖
+    const clampStart = Math.max(0, startIdx);
+    const clampEnd = Math.min(totalCells - 1, endIdx);
+    const type = p.type === 'call' ? 'call' : 'put';
+    const totalDays = daysBetween(p.openDate, endDateStr) + 1;
+    const label = `${esc(p.stockName)} · ${totalDays}天`;
+    const stateCls = p.closeDate ? '' : ' open';
+    for (let idx = clampStart; idx <= clampEnd; ) {
+      const wk = Math.floor(idx / 7);
+      const colStart = idx % 7;
+      const weekEndIdx = wk * 7 + 6;
+      const segEnd = Math.min(clampEnd, weekEndIdx);
+      const span = segEnd - idx + 1;
+      const isRealStart = idx === startIdx;   // 真正的開倉日在這一段
+      const isRealEnd = segEnd === endIdx;     // 真正的結束日在這一段
+      segsByWeek[wk].push({
+        colStart, span, type, stateCls, label, isRealStart, isRealEnd,
+        tip: `${esc(p.stockName)}（${type === 'call' ? 'CALL' : 'PUT'}）${fmtDate(p.openDate)} -> ${fmtDate(endDateStr)}，共 ${totalDays} 天${p.closeDate ? '（已平倉）' : '（持倉中）'}`,
+      });
+      idx = segEnd + 1;
+    }
+  });
+
+  // 逐週建立 HTML
+  let weeksHtml = '';
+  for (let wk = 0; wk < numWeeks; wk++) {
+    let daysHtml = '';
+    for (let col = 0; col < 7; col++) {
+      const idx = wk * 7 + col;
+      const cellDate = new Date(year, month, 1 - firstDow + idx);
+      const cy = cellDate.getFullYear(), cm = cellDate.getMonth(), cd = cellDate.getDate();
+      const key = `${cy}-${String(cm + 1).padStart(2, '0')}-${String(cd).padStart(2, '0')}`;
+      const inMonth = cm === month && cy === year;
+      const isWeekend = col >= 5;
+      const isToday = key === todayStr;
+      const isPast = inMonth && key < todayStr;
+      const isFuture = inMonth && key > todayStr;
+      const hasEvent = inMonth && openDates[key];
+      const holidayName = HK_HOLIDAYS[key];
+
+      let cls = 'cal-cell';
+      cls += inMonth ? ' in-month' : ' adjacent';
+      if (isWeekend) cls += ' weekend';
+      if (holidayName && inMonth) cls += ' holiday';
+      if (isPast) cls += ' past';
+      if (isFuture) cls += ' future';
+      if (isToday) cls += ' today';
+      if (hasEvent) cls += ' has-event';
+
+      const tips = [];
+      if (holidayName) tips.push(holidayName);
+      if (hasEvent) tips.push(`這天做過 ${openDates[key]} 筆交易`);
+      const tip = tips.length ? ` title="${tips.join('｜')}"` : '';
+      const holidayDot = (holidayName && inMonth) ? `<span class="cal-holiday-dot">●</span>` : '';
+      daysHtml += `<div class="${cls}"${tip}>${holidayDot}<span class="cal-num">${cd}</span></div>`;
+    }
+
+    // 連接條（可能多列堆疊，用貪心分配 lane）
+    const segs = segsByWeek[wk];
+    const lanes = []; // 每 lane 是該列已佔用的欄位
+    segs.forEach(s => {
+      let lane = lanes.findIndex(occupied => {
+        for (let c = s.colStart; c < s.colStart + s.span; c++) if (occupied[c]) return false;
+        return true;
+      });
+      if (lane === -1) { lane = lanes.length; lanes.push({}); }
+      for (let c = s.colStart; c < s.colStart + s.span; c++) lanes[lane][c] = true;
+      s.lane = lane;
+    });
+    let barsHtml = '';
+    segs.forEach(s => {
+      const radiusL = s.isRealStart ? '10px' : '2px';
+      const radiusR = s.isRealEnd ? '10px' : '2px';
+      const startDot = s.isRealStart ? '▶' : '';
+      const endDot = s.isRealEnd ? (s.stateCls ? '⏰' : '✔') : '';
+      barsHtml += `<div class="cal-bar-seg ${s.type}${s.stateCls}" title="${s.tip}" style="grid-column:${s.colStart + 1}/span ${s.span};grid-row:${s.lane + 1};border-radius:${radiusL} ${radiusR} ${radiusR} ${radiusL}">`
+        + `${startDot ? `<span>${startDot}</span>` : ''}`
+        + `<span style="overflow:hidden;text-overflow:ellipsis">${s.isRealStart ? s.label : ''}</span>`
+        + `${endDot ? `<span class="bar-end">${endDot}</span>` : ''}`
+        + `</div>`;
+    });
+
+    weeksHtml += `<div class="cal-week">
+      <div class="cal-week-days">${daysHtml}</div>
+      ${segs.length ? `<div class="cal-week-bars">${barsHtml}</div>` : ''}
+    </div>`;
+  }
+
+  return `<div class="cal-month-frame">
+    <div class="cal-month-title">${year} / ${month + 1}</div>
+    <div class="cal-grid">
+      <div class="cal-weekhead">${weekHeads.map((h, i) => `<div class="cal-cell cal-head${i >= 5 ? ' weekend' : ''}">${h}</div>`).join('')}</div>
+      ${weeksHtml}
+    </div>
+  </div>`;
 }
 
 // ----- 月總結：把每個月份分開統計 -----
