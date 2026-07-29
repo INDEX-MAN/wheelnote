@@ -1436,7 +1436,8 @@ function renderOpenPositions() {
         <td class="${c.profit >= 0 ? 'profit' : 'loss'}">${HKD.format(c.profit)}</td>
         <td>
           <div class="actions">
-            <button class="btn-success btn-sm" onclick="openCloseModal('${p.id}')">平倉</button>
+            <button class="btn-primary btn-sm" onclick="openCloseModal('${p.id}','assigned')" title="${(p.type||'put')==='call'?'被指派交貨':'被指派接貨'}">${(p.type||'put')==='call'?'📤 交貨':'📦 接貨'}</button>
+            <button class="btn-success btn-sm" onclick="openCloseModal('${p.id}')" title="買回權利結束（收錢）">平倉</button>
             <button class="btn-secondary btn-sm" onclick="openEditModal('${p.id}')">編輯</button>
             <button class="btn-danger btn-sm" onclick="deletePosition('${p.id}')">刪除</button>
           </div>
@@ -1654,26 +1655,32 @@ function openEditModal(id) {
   });
 }
 
-function openCloseModal(id) {
+function openCloseModal(id, outcome) {
   const p = state.positions.find(x => x.id === id);
   if (!p) return;
-  const c = calc(p);
+  const assigned = outcome === 'assigned';
+  const t = p.type || 'put';
   showFormModal({
-    title: `平倉 — ${esc(p.stockName)}`,
+    title: assigned
+      ? `${t === 'call' ? '交貨（被指派）' : '接貨（被指派）'} — ${esc(p.stockName)}`
+      : `平倉 — ${esc(p.stockName)}`,
     position: {
       ...p,
+      outcome: assigned ? 'assigned' : 'premium',
       closeDate: today(),
       buyPrice: '',
       commission: p.commission || 0
     },
     closeMode: true,
-    saveLabel: '確認平倉',
+    saveLabel: assigned ? '確認' : '確認平倉',
     onSave: (data) => {
       Object.assign(p, data);
       if (p.type === 'put') syncHoldingForPut(p); else syncHoldingForCall(p);
       save();
       render();
-      showToast('已平倉', 'success');
+      showToast(data.outcome === 'assigned'
+        ? (p.type === 'call' ? '已交貨' : '已接貨')
+        : '已平倉', 'success');
     }
   });
 }
