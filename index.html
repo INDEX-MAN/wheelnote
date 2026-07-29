@@ -130,6 +130,21 @@
     margin-bottom: 18px;
   }
   .cal-title { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+  .cal-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cal-nav-btn {
+    width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border);
+    background: #fff; color: var(--text); font-size: 18px; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: all 0.15s; padding: 0;
+  }
+  .cal-nav-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .cal-reset-btn {
+    margin-left: 4px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: #fff; color: var(--muted); font-size: 12px; cursor: pointer; transition: all 0.15s;
+  }
+  .cal-reset-btn:hover { color: var(--accent); border-color: var(--accent); }
+  /* 第二個月稍微染色，區分兩個月（不覆蓋 today）*/
+  .cal-cell.cal-m2.in-month:not(.today).future { background: #eef2fb; border-color: #d8e0ee; }
+  .cal-cell.cal-m2.in-month:not(.today).past { background: #e9ebf1; border-color: #dde0e6; }
   .cal-sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
   .cal-pills { display: flex; gap: 12px; }
   .cal-pill {
@@ -849,30 +864,60 @@ function render() {
   renderClosedPositions();
 }
 
+// 日曆導覽：顯示起始月（預設本月），左右按鈕可調整
+let calStartYM = null;
+function calShift(deltaMonths) {
+  const n = new Date();
+  let y = calStartYM ? calStartYM.year : n.getFullYear();
+  let m = calStartYM ? calStartYM.month : n.getMonth();
+  m += deltaMonths;
+  while (m < 0) { m += 12; y -= 1; }
+  while (m > 11) { m -= 12; y += 1; }
+  calStartYM = { year: y, month: m };
+  renderMonthCalendar();
+}
+function calReset() {
+  const n = new Date();
+  calStartYM = { year: n.getFullYear(), month: n.getMonth() };
+  renderMonthCalendar();
+}
+
 // ----- 本月剩餘天數日曆提示 + 期權持續期間連接條 -----
 function renderMonthCalendar() {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth(); // 0-based
   const todayDate = now.getDate();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const daysLeft = daysInMonth - todayDate;
+  const todayStr = today();
   const monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
 
   // 以週一為每週開始（週一…週日）
   const weekHeads = ['一','二','三','四','五','六','日'];
-  const firstDow = (new Date(year, month, 1).getDay() + 6) % 7; // 週一=0…週日=6
 
-  // 網格第一格代表的日期（可能是上個月）
-  const gridStart = new Date(year, month, 1 - firstDow);
+  // 顯示範圍：起始月（可調整）+ 下個月，共兩個月（讓跨月部位的時間條連續）
+  if (!calStartYM) calStartYM = { year: now.getFullYear(), month: now.getMonth() };
+  const sY = calStartYM.year, sM = calStartYM.month;
+  const eM = (sM + 1) % 12;
+  const eY = sM + 1 >= 12 ? sY + 1 : sY;
+  const titleStr = sY === eY
+    ? `${sY} 年 ${monthNames[sM]} - ${monthNames[eM]}`
+    : `${sY} 年 ${monthNames[sM]} - ${eY} 年 ${monthNames[eM]}`;
+
+  // 網格第一格 = 起始月 1 號往前推到週一
+  const firstDow = (new Date(sY, sM, 1).getDay() + 6) % 7; // 週一=0…週日=6
+  const gridStart = new Date(sY, sM, 1 - firstDow);
   gridStart.setHours(12, 0, 0, 0);
   const dayMs = 24 * 60 * 60 * 1000;
   const toIndex = (d) => Math.round((new Date(d + 'T12:00:00') - gridStart) / dayMs);
 
-  // 決定顯示幾週（5 或 6 週）：若第 6 週仍含本月日子才顯示
-  const lastCellDate = new Date(year, month, 1 - firstDow + 41);
-  const numWeeks = (lastCellDate.getMonth() === month && lastCellDate.getFullYear() === year) ? 6 : 5;
-  const totalCells = numWeeks * 7;
+  // 網格最後一格 = 結束月最後一天往後推到週日（涵蓋完整兩個月）
+  const lastDayEnd = new Date(eY, eM + 1, 0); // 結束月最後一天
+  const monDowLast = (lastDayEnd.getDay() + 6) % 7; // 該天是週幾（週一=0）
+  const gridEnd = new Date(lastDayEnd);
+  gridEnd.setDate(lastDayEnd.getDate() + (6 - monDowLast));
+  gridEnd.setHours(12, 0, 0, 0);
+  const totalCells = Math.round((gridEnd - gridStart) / dayMs) + 1;
+  const numWeeks = totalCells / 7;
 
   // 標記「該天有沒有做過交易」（開倉當天）
   const openDates = {};
@@ -921,19 +966,21 @@ function renderMonthCalendar() {
     let daysHtml = '';
     for (let col = 0; col < 7; col++) {
       const idx = wk * 7 + col;
-      const cellDate = new Date(year, month, 1 - firstDow + idx);
+      const cellDate = new Date(sY, sM, 1 - firstDow + idx);
       const cy = cellDate.getFullYear(), cm = cellDate.getMonth(), cd = cellDate.getDate();
-      const inMonth = cm === month && cy === year;
-      const isWeekend = col >= 5;
-      const isToday = inMonth && cd === todayDate;
-      const isPast = inMonth && cd < todayDate;
-      const isFuture = inMonth && cd > todayDate;
       const key = `${cy}-${String(cm + 1).padStart(2, '0')}-${String(cd).padStart(2, '0')}`;
+      const inMonth = (cm === sM && cy === sY) || (cm === eM && cy === eY);
+      const isMonth2 = cm === eM && cy === eY;
+      const isWeekend = col >= 5;
+      const isToday = key === todayStr;
+      const isPast = inMonth && key < todayStr;
+      const isFuture = inMonth && key > todayStr;
       const hasEvent = inMonth && openDates[key];
       const holidayName = HK_HOLIDAYS[key];
 
       let cls = 'cal-cell';
       cls += inMonth ? ' in-month' : ' adjacent';
+      if (isMonth2) cls += ' cal-m2';
       if (isWeekend) cls += ' weekend';
       if (holidayName && inMonth) cls += ' holiday';
       if (isPast) cls += ' past';
@@ -984,7 +1031,12 @@ function renderMonthCalendar() {
     <div class="month-calendar">
       <div class="cal-top">
         <div>
-          <div class="cal-title">📆 ${year} 年 ${monthNames[month]}</div>
+          <div class="cal-title-row">
+            <button class="cal-nav-btn" onclick="calShift(-1)" title="上個月">‹</button>
+            <span class="cal-title">📆 ${titleStr}</span>
+            <button class="cal-nav-btn" onclick="calShift(1)" title="下個月">›</button>
+            <button class="cal-reset-btn" onclick="calReset()" title="回到本月">回到本月</button>
+          </div>
           <div class="cal-sub">今天是 ${fmtDate(today())}（本月第 ${todayDate} 天 / 共 ${daysInMonth} 天）</div>
         </div>
         <div class="cal-pills">
