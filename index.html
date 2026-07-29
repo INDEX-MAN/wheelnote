@@ -604,6 +604,33 @@
     </div>
   </section>
 
+  <section class="section" id="holdingsSection">
+    <div class="section-header">
+      <h2>📦 持貨中（股票） <span class="count" id="holdingsCount"></span></h2>
+      <div class="add-buttons">
+        <button class="btn-success btn-sm" onclick="openNewModal('call')">＋ 開 SHORT CALL</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="holdingsTable">
+        <thead>
+          <tr>
+            <th>股票</th>
+            <th>幣別</th>
+            <th>股數</th>
+            <th>成本（行權價）</th>
+            <th>保本價（−期權金）</th>
+            <th>總成本</th>
+            <th>來源</th>
+            <th>接貨日</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="holdingsBody"></tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="section">
     <div class="section-header">
       <h2>✅ 已平倉 <span class="count" id="closedCount"></span></h2>
@@ -669,7 +696,25 @@ function toHKD(p, v) {
   return ((p && p.currency === 'USD') ? USD_HKD_RATE : 1) * (+v || 0);
 }
 
-let state = { positions: [] };
+let state = { positions: [], holdings: [] };
+
+// 確保 state 結構完整（holdings 陣列、每筆 position 的 outcome 預設）- 舊資料相容
+function ensureStateShape() {
+  if (!Array.isArray(state.holdings)) state.holdings = [];
+  if (Array.isArray(state.positions)) {
+    state.positions.forEach(p => {
+      if (!p.type) p.type = 'put';
+      if (!p.currency) p.currency = 'HKD';        // 舊資料預設港幣
+      if (!p.outcome) p.outcome = 'premium';      // 預設「收錢」（舊資料視為收錢結束）
+    });
+  }
+  if (Array.isArray(state.holdings)) {
+    state.holdings.forEach(h => {
+      if (!h.status) h.status = 'open';
+      if (h.realizedPL === undefined) h.realizedPL = 0;
+    });
+  }
+}
 
 // 香港公眾假期（2025–2026）YYYY-MM-DD -> 名稱
 const HK_HOLIDAYS = {
@@ -711,12 +756,8 @@ async function save() {
 }
 function applyState(parsed) {
   if (parsed && Array.isArray(parsed.positions)) {
-    // 為舊資料補欄位（相容性）
-    parsed.positions.forEach(p => {
-      if (!p.type) p.type = 'put';
-      if (!p.currency) p.currency = 'HKD';   // 舊資料預設港幣
-    });
     state = parsed;
+    ensureStateShape();
   }
 }
 async function load() {
@@ -729,7 +770,7 @@ async function load() {
       .maybeSingle();
     if (error) throw error;
     if (data && data.data) applyState(data.data);
-    else state = { positions: [] };
+    else state = { positions: [], holdings: [] };
   } catch (e) {
     console.error('Load failed', e);
     showToast('載入雲端資料失敗：' + (e.message || e), 'error');
@@ -761,7 +802,9 @@ function calc(p) {
   const shares = +p.sharesPerContract || 0;
   const contracts = +p.contracts || 0;
   const sell = toHKD(p, p.sellPrice);     // 原幣 -> 港幣
-  const buy = toHKD(p, p.buyPrice);
+  // 接貨(PUT)/交貨(CALL)：被指派，沒有買回，buyPrice 當 0；權利金全收
+  const assigned = p.outcome === 'assigned';
+  const buy = assigned ? 0 : toHKD(p, p.buyPrice);
   const strike = toHKD(p, p.strikePrice);
   const comm = toHKD(p, p.commission);
   const type = p.type || 'put';  // 預設 put（相容舊資料）
@@ -773,7 +816,7 @@ function calc(p) {
   const sellPremium = sell * shares * contracts;
   const buyPremium = buy * shares * contracts;
   const netPremium = sellPremium - buyPremium;
-  const profit = netPremium - comm;
+  let profit = netPremium - comm;
   const closingCost = buy * shares * contracts;
 
   // 對於 SHORT PUT: 風險 = 被指派接貨 = strike × shares × contracts
@@ -781,9 +824,15 @@ function calc(p) {
   const stockCost = strike * shares * contracts;
 
   // 淨股票成本 / 淨持倉收益
-  // 對於 PUT: 淨接貨成本 = strike × 股數 - premium
+  // 對於 PUT: 淨接貨成本 = strike × 股數 - premium（接貨後的有效成本基準）
   // 對於 CALL: 淨交貨收入 = strike × 股數 + premium（被指派後實際售股收入）
   const netStockCost = stockCost - netPremium;
+
+  // 接貨(PUT)持貨：實際成本 = 行權價（算損益用）；保本價 = 行權價 − 期權金（顯示用）
+  // 期權金已計入 PUT 損益，故股票損益從行權價起算，避免重複計算期權金
+  const assignShares = shares * contracts;
+  const assignCostPerShare = strike;                 // 港幣，實際成本基準
+  const assignBreakevenPerShare = strike - sell;     // 港幣，保本價（行權價 − 期權金）
 
   // === Short Call 持貨分析 ===
   // 若已有持股，計算：
@@ -809,6 +858,12 @@ function calc(p) {
     };
   }
 
+  // CALL 交貨（被指派）：股票以行權價賣出，整筆已實現 = 股票損益 + 期權金 − 手續費
+  // 用 holdingAnalysis.netHoldingPL（已含股票損益 + 期權金 − 手續費，持貨損益不再另計）
+  if (assigned && type === 'call' && holdingAnalysis) {
+    profit = holdingAnalysis.netHoldingPL;
+  }
+
   const returnPct = stockCost > 0 ? (profit / stockCost) * 100 : 0;
 
   const isOpen = !p.closeDate;
@@ -832,7 +887,9 @@ function calc(p) {
   return {
     type, sellPremium, buyPremium, netPremium, profit,
     stockCost, netStockCost, returnPct, holdingDays, perDay,
-    daysToExpiry, isOpen, closingCost, holdingAnalysis
+    daysToExpiry, isOpen, closingCost, holdingAnalysis,
+    assigned, assignShares, assignCostPerShare, assignBreakevenPerShare,
+    assignCostTotal: stockCost, assignBreakevenTotal: netStockCost
   };
 }
 
@@ -862,6 +919,7 @@ function render() {
   renderSummary();
   renderMonthlySummary();
   renderOpenPositions();
+  renderHoldings();
   renderClosedPositions();
 }
 
@@ -1242,13 +1300,15 @@ function renderDashboard() {
   const closedPuts = closeds.filter(p => (p.type || 'put') === 'put');
   const closedCalls = closeds.filter(p => p.type === 'call');
 
-  const totalProfit = closeds.reduce((s, p) => s + calc(p).profit, 0);
+  const totalProfit = closeds.reduce((s, p) => s + calc(p).profit, 0) + state.holdings.reduce((s, h) => s + toHKD(h, h.realizedPL || 0), 0);
   const putProfit = closedPuts.reduce((s, p) => s + calc(p).profit, 0);
   const callProfit = closedCalls.reduce((s, p) => s + calc(p).profit, 0);
   const wins = closeds.filter(p => calc(p).profit > 0).length;
   const winRate = closeds.length > 0 ? (wins / closeds.length) * 100 : 0;
   const unrealized = opens.reduce((s, p) => s + calc(p).profit, 0);
   const openStockCost = opens.reduce((s, p) => s + calc(p).stockCost, 0);
+  const openHoldings = state.holdings.filter(h => h.status === 'open');
+  const openHoldingsCost = openHoldings.reduce((s, h) => s + toHKD(h, h.costPerShare) * (+h.shares || 0), 0);
   // 平均每張期權每天收入：每筆已平倉 = 淨期權金 / 持倉天 / 張數，再取平均（含虧損/平手單）
   const dailyPerContractList = closeds
     .map(p => {
@@ -1288,6 +1348,11 @@ function renderDashboard() {
       <div class="sublabel">${opens.length} 筆持倉中</div>
     </div>
     <div class="stat-card">
+      <div class="label">持貨總成本（股票）</div>
+      <div class="value">${HKD.format(openHoldingsCost)}</div>
+      <div class="sublabel">${openHoldings.length} 筆持貨中（PUT 接貨）</div>
+    </div>
+    <div class="stat-card">
       <div class="label">平均每張期權每天收入</div>
       <div class="value ${dailyClass}">${closeds.length > 0 ? HKD.format(avgDailyPerContract) : '—'}</div>
       <div class="sublabel">累計持有 ${totalHoldingDays} 天 / ${closeds.length} 筆</div>
@@ -1302,8 +1367,10 @@ function renderSummary() {
   const openCalls = opens.filter(p => p.type === 'call').length;
   const totalCommission = state.positions.reduce((s, p) => s + toHKD(p, p.commission), 0);
   const hasUSD = state.positions.some(p => p.currency === 'USD');
+  const openHoldingsCount = state.holdings.filter(h => h.status === 'open').length;
   document.getElementById('summaryBar').innerHTML = `
     <span>持倉中 <strong>${opens.length}</strong> 筆 (PUT <strong>${openPuts}</strong> / CALL <strong>${openCalls}</strong>)</span>
+    <span>持貨 <strong>${openHoldingsCount}</strong> 筆（PUT 接貨的股票）</span>
     <span>已平倉 <strong>${closeds.length}</strong> 筆</span>
     <span>總手續費 <strong>${HKD.format(totalCommission)}</strong></span>
     ${hasUSD ? '<span style="color:var(--muted)">美元(USD)部位已 ×7.8 換算港幣顯示</span>' : ''}
@@ -1396,9 +1463,10 @@ function renderClosedPositions() {
       : '<span class="badge badge-blue">PUT</span>';
     const curBadge = p.currency === 'USD' ? ' <span class="badge" style="background:#eef2ff;color:#4338ca">USD</span>' : '';
     const autoBadge = p.autoClosed ? ' <span class="badge badge-gray" title="到期未到價自動平倉">到期</span>' : '';
+    const assignBadge = c.assigned ? ` <span class="badge badge-yellow" title="${c.type === 'call' ? '被指派交貨' : '被指派接貨'}">${c.type === 'call' ? '📤交貨' : '📦接貨'}</span>` : '';
     return `
       <tr>
-        <td>${typeBadge}${autoBadge}${curBadge}</td>
+        <td>${typeBadge}${assignBadge}${autoBadge}${curBadge}</td>
         <td>
           <div class="stock-name">${esc(p.stockName)}</div>
           <div class="strike-info">行權價 ${NUM.format(toHKD(p, p.strikePrice))}</div>
@@ -1409,7 +1477,7 @@ function renderClosedPositions() {
         <td>${c.holdingDays}</td>
         <td>${NUM.format(p.contracts)}</td>
         <td>${NUM.format(toHKD(p, p.sellPrice))}</td>
-        <td>${NUM.format(toHKD(p, p.buyPrice))}</td>
+        <td>${c.assigned ? '<span style="color:var(--muted)">-</span>' : NUM.format(toHKD(p, p.buyPrice))}</td>
         <td>${HKD.format(c.netPremium)}</td>
         <td>${HKD.format(c.stockCost)}</td>
         <td>${HKD.format(toHKD(p, p.commission))}</td>
@@ -1424,6 +1492,107 @@ function renderClosedPositions() {
         </td>
       </tr>`;
   }).join('');
+}
+
+// ----- 持貨（股票）-----
+function renderHoldings() {
+  const opens = state.holdings.filter(h => h.status === 'open')
+    .sort((a, b) => (a.openDate || '') < (b.openDate || '') ? 1 : -1);
+  document.getElementById('holdingsCount').textContent = opens.length > 0 ? `(${opens.length})` : '';
+  const tbody = document.getElementById('holdingsBody');
+  if (opens.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><div class="icon">📦</div>目前沒有持貨。SHORT PUT 接貨後會自動建立在這裡。</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = opens.map(h => {
+    const curBadge = h.currency === 'USD' ? ' <span class="badge" style="background:#eef2ff;color:#4338ca">USD</span>' : '';
+    const totalCost = toHKD(h, h.costPerShare) * (+h.shares || 0);
+    const breakeven = h.breakevenPrice != null ? h.breakevenPrice : (h.costPerShare - (h.premiumPerShare || 0));
+    const source = h.sourcePositionId ? state.positions.find(p => p.id === h.sourcePositionId) : null;
+    return `
+      <tr>
+        <td><span class="stock-name">${esc(h.stockName)}</span></td>
+        <td>${h.currency || 'HKD'}${curBadge}</td>
+        <td>${NUM.format(h.shares)}</td>
+        <td>${NUM.format(toHKD(h, h.costPerShare))}</td>
+        <td>${NUM.format(toHKD(h, breakeven))}</td>
+        <td>${HKD.format(totalCost)}</td>
+        <td>${source ? esc(source.stockName) : '-'}${source ? ` <span class="strike-info">@ ${NUM.format(toHKD(source, source.strikePrice))}</span>` : ''}</td>
+        <td>${fmtDate(h.openDate)}</td>
+        <td>
+          <div class="actions">
+            <button class="btn-success btn-sm" onclick="openCallFromHolding('${h.id}')" title="用這批持貨開 SHORT CALL（自動帶入成本）">開 CALL</button>
+            <button class="btn-primary btn-sm" onclick="sellHolding('${h.id}')">賣出</button>
+            <button class="btn-danger btn-sm" onclick="deleteHolding('${h.id}')">刪除</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+// 賣出持貨（直接賣股票，實現損益 = (賣價 − 成本) × 股數）
+function sellHolding(id) {
+  const h = findHolding(id);
+  if (!h) return;
+  const input = prompt(`賣出持貨「${h.stockName}」${NUM.format(h.shares)}股\n請輸入每股賣價（${h.currency || 'HKD'}）：`, '');
+  if (input === null) return;
+  const price = +input;
+  if (isNaN(price) || price < 0) return showToast('請輸入有效的賣價', 'error');
+  h.status = 'closed';
+  h.closeDate = today();
+  h.closePrice = price;
+  h.closeReason = 'sold';
+  h.realizedPL = (price - (+h.costPerShare || 0)) * (+h.shares || 0);   // 原幣
+  save();
+  render();
+  showToast(`已賣出持貨，損益 ${HKD.format(toHKD(h, h.realizedPL))}`, h.realizedPL >= 0 ? 'success' : 'error');
+}
+
+// 刪除持貨（不影響來源 PUT 紀錄）
+function deleteHolding(id) {
+  const h = findHolding(id);
+  if (!h) return;
+  if (!confirm(`確定刪除持貨「${h.stockName}」${NUM.format(h.shares)}股？\n（不影響來源 PUT 紀錄，此操作無法復原）`)) return;
+  state.holdings = state.holdings.filter(x => x.id !== id);
+  state.positions.forEach(p => { if (p.holdingId === id) p.holdingId = null; });
+  save();
+  render();
+  showToast('已刪除持貨');
+}
+
+// 從持貨開 SHORT CALL：自動帶入成本、股數、連結
+function openCallFromHolding(id) {
+  const h = findHolding(id);
+  if (!h) return;
+  showFormModal({
+    title: `新增 SHORT CALL（從持貨帶入）- ${esc(h.stockName)}`,
+    position: {
+      type: 'call',
+      currency: h.currency || 'HKD',
+      stockName: h.stockName,
+      openDate: today(),
+      closeDate: '',
+      expirationDate: '',
+      strikePrice: '',
+      sellPrice: '',
+      buyPrice: '',
+      contracts: '',
+      sharesPerContract: 1000,
+      commission: 0,
+      holdingCost: h.costPerShare,
+      holdingShares: h.shares,
+      linkedHoldingId: h.id,
+    },
+    saveLabel: '儲存',
+    onSave: (data) => {
+      data.id = uid();
+      state.positions.push(data);
+      syncHoldingForCall(data);
+      save();
+      render();
+      showToast('已新增 Short Call（持貨已帶入）', 'success');
+    }
+  });
 }
 
 function esc(s) {
@@ -1457,6 +1626,7 @@ function openNewModal(type) {
     onSave: (data) => {
       data.id = uid();
       state.positions.push(data);
+      if (data.type === 'put') syncHoldingForPut(data); else syncHoldingForCall(data);
       save();
       render();
       showToast(data.type === 'call' ? '已新增 Short Call' : '已新增 Short Put', 'success');
@@ -1476,6 +1646,7 @@ function openEditModal(id) {
     saveLabel: '更新',
     onSave: (data) => {
       Object.assign(p, data);
+      if (p.type === 'put') syncHoldingForPut(p); else syncHoldingForCall(p);
       save();
       render();
       showToast('已更新', 'success');
@@ -1499,6 +1670,7 @@ function openCloseModal(id) {
     saveLabel: '確認平倉',
     onSave: (data) => {
       Object.assign(p, data);
+      if (p.type === 'put') syncHoldingForPut(p); else syncHoldingForCall(p);
       save();
       render();
       showToast('已平倉', 'success');
@@ -1547,9 +1719,83 @@ function duplicatePosition(id) {
   });
 }
 
+// ===== 持貨（股票）副作用：PUT 接貨建倉 / CALL 交貨平倉 =====
+function findHolding(id) { return state.holdings.find(h => h.id === id); }
+
+// PUT 存檔後：依 outcome 建立/更新/移除對應持貨
+function syncHoldingForPut(p) {
+  if (p.type !== 'put') return;
+  if (p.outcome === 'assigned' && p.closeDate) {
+    const shares = (+p.sharesPerContract || 0) * (+p.contracts || 0);
+    if (shares <= 0) return;
+    const strike = +p.strikePrice || 0;
+    const premium = +p.sellPrice || 0;
+    const fields = {
+      stockName: p.stockName,
+      currency: p.currency || 'HKD',
+      shares,
+      costPerShare: strike,             // 實際成本（算損益用）= 行權價
+      breakevenPrice: strike - premium, // 保本價 = 行權價 − 期權金（顯示用）
+      premiumPerShare: premium,
+      strikePrice: strike,
+      openDate: p.closeDate,
+      sourcePositionId: p.id,
+    };
+    const existing = p.holdingId ? findHolding(p.holdingId) : null;
+    if (existing) {
+      if (existing.status === 'open') Object.assign(existing, fields);  // 更新（編輯後接貨數/成本可能變）
+      // 已平倉的持貨不重新打開，避免覆蓋已實現損益
+    } else {
+      const h = { id: uid(), status: 'open', realizedPL: 0, ...fields };
+      state.holdings.push(h);
+      p.holdingId = h.id;
+    }
+  } else {
+    // 收錢 / 持倉中：若之前接貨建過持貨，且持貨仍 open 且沒被 CALL 用過，則一併移除
+    if (p.holdingId) {
+      const h = findHolding(p.holdingId);
+      if (h && h.status === 'open' && !h.linkedCallId) {
+        state.holdings = state.holdings.filter(x => x.id !== h.id);
+        p.holdingId = null;
+      } else if (h) {
+        showToast('此 PUT 的持貨已被 CALL 使用或已平倉，未移除持貨紀錄', 'error');
+      }
+    }
+  }
+}
+
+// CALL 存檔後：依 outcome 平倉/重開連結的持貨（交貨 = 以行權價賣出持股）
+function syncHoldingForCall(p) {
+  if (p.type !== 'call') return;
+  const h = p.linkedHoldingId ? findHolding(p.linkedHoldingId) : null;
+  if (p.outcome === 'assigned' && p.closeDate) {
+    if (h && h.status === 'open') {
+      h.status = 'closed';
+      h.closeDate = p.closeDate;
+      h.closePrice = +p.strikePrice || 0;     // 以行權價交貨
+      h.closeReason = 'call-assigned';
+      h.linkedCallId = p.id;
+      h.realizedPL = 0;   // 股票損益已算進 CALL 的 netHoldingPL，這裡不重複計入已實現
+    }
+  } else {
+    // 收錢：若此 CALL 之前交貨平倉過持貨，且仍指向此 CALL，則重新打開（股票沒被叫走）
+    if (h && h.status === 'closed' && h.closeReason === 'call-assigned' && h.linkedCallId === p.id) {
+      h.status = 'open';
+      h.closeDate = null;
+      h.closePrice = null;
+      h.closeReason = null;
+      h.realizedPL = 0;
+    }
+  }
+}
+
 // ----- Form modal -----
 function showFormModal({ title, position, saveLabel, onSave, closeMode }) {
   const container = document.getElementById('modalContainer');
+  const showOutcome = closeMode || !!position.closeDate;           // 平倉中或編輯已平倉時顯示結局選擇
+  const outcomeIsAssigned = position.outcome === 'assigned';
+  const curType = position.type || 'put';
+  const openHoldings = (state.holdings || []).filter(h => h.status === 'open');  // CALL 可帶入的持貨
   container.innerHTML = `
     <div class="modal-backdrop">
       <div class="modal">
@@ -1587,13 +1833,28 @@ function showFormModal({ title, position, saveLabel, onSave, closeMode }) {
               <label>到期日 *</label>
               <input type="date" id="f_expirationDate" value="${position.expirationDate || ''}">
             </div>
-            ${closeMode ? '' : `
             <div class="form-field">
-              <label>買入日期（平倉；留空=持倉中）</label>
-              <input type="date" id="f_closeDate" value="${position.closeDate || ''}">
+              <label>${closeMode ? '平倉日期' : '買入日期（平倉；留空=持倉中）'}</label>
+              <input type="date" id="f_closeDate" value="${closeMode ? (position.closeDate || today()) : (position.closeDate || '')}">
             </div>
-            `}
+            <div class="form-field full" id="outcomeSection" style="display:${showOutcome ? '' : 'none'}">
+              <label>結束方式 *</label>
+              <div class="radio-group">
+                <label class="radio-label"><input type="radio" name="f_outcome" value="premium" ${!outcomeIsAssigned ? 'checked' : ''}> 收錢（買回 / 到期）</label>
+                <label class="radio-label"><input type="radio" name="f_outcome" value="assigned" ${outcomeIsAssigned ? 'checked' : ''}> <span id="assignedLabel">${curType === 'call' ? '交貨（被指派）' : '接貨（被指派）'}</span></label>
+              </div>
+              <div class="form-hint" id="outcomeHint">${curType === 'call' ? '交貨：以行權價賣出持股、期權金全收（持股損益在此實現）' : '接貨：以行權價買入股票、期權金全收（自動建立持貨）'}</div>
+            </div>
             <div id="holdingCostSection" style="display:${(position.type || 'put') === 'call' ? 'contents' : 'none'};grid-column:1/-1">
+              <div class="form-field full">
+                <label>從既有持貨帶入 <span style="color:var(--muted);font-weight:normal">（CALL 專用，可選）</span></label>
+                <select id="f_holdingSelect" onchange="applyHoldingToForm(this.value)">
+                  <option value="">-- 手動輸入持貨成本 --</option>
+                  ${openHoldings.map(h => `<option value="${h.id}" ${position.linkedHoldingId === h.id ? 'selected' : ''}>${esc(h.stockName)} · ${NUM.format(h.shares)}股 · 成本 ${NUM.format(toHKD(h, h.costPerShare))} · 保本 ${NUM.format(toHKD(h, h.breakevenPrice))}</option>`).join('')}
+                </select>
+                <div class="form-hint">選擇 PUT 接貨自動建立的持貨，自動帶入成本與股數（交貨時會平倉該持貨）</div>
+                <input type="hidden" id="f_linkedHoldingId" value="${position.linkedHoldingId || ''}">
+              </div>
               <div class="form-field">
                 <label>持貨 — 每股成本 <span class="cur-tag">HK$</span> <span style="color:var(--muted);font-weight:normal">（CALL 專用）</span></label>
                 <input type="number" id="f_holdingCost" value="${position.holdingCost || ''}" step="0.01" min="0" placeholder="例如 50.5">
@@ -1659,6 +1920,40 @@ function showFormModal({ title, position, saveLabel, onSave, closeMode }) {
       const showHolding = (isCall || (otherRadio && otherRadio.value === 'call' && otherRadio.checked));
       const section = document.getElementById('holdingCostSection');
       if (section) section.style.display = showHolding ? 'contents' : 'none';
+      refreshOutcomeUI();
+      updatePreview();
+    });
+  });
+
+  // 結束方式（收錢/接貨/交貨）切換 + 依類型更新標籤
+  function refreshOutcomeUI() {
+    const outEl = document.querySelector('input[name="f_outcome"]:checked');
+    const assigned = outEl ? outEl.value === 'assigned' : false;
+    const buyField = document.getElementById('f_buyPrice');
+    const buyWrap = buyField ? buyField.closest('.form-field') : null;
+    if (buyWrap) buyWrap.style.display = assigned ? 'none' : '';
+    const typeEl = document.querySelector('input[name="f_type"]:checked');
+    const t = typeEl ? typeEl.value : 'put';
+    const lbl = document.getElementById('assignedLabel');
+    const hint = document.getElementById('outcomeHint');
+    if (lbl) lbl.textContent = t === 'call' ? '交貨（被指派）' : '接貨（被指派）';
+    if (hint) hint.textContent = t === 'call'
+      ? '交貨：以行權價賣出持股、期權金全收（持股損益在此實現）'
+      : '接貨：以行權價買入股票、期權金全收（自動建立持貨）';
+  }
+  document.querySelectorAll('input[name="f_outcome"]').forEach(el => {
+    el.addEventListener('change', () => { refreshOutcomeUI(); updatePreview(); });
+  });
+  refreshOutcomeUI();
+  // 手動改持貨成本/股數時，清除「帶入持貨」連結（避免連結與手填不一致）
+  ['f_holdingCost','f_holdingShares'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      const sel = document.getElementById('f_holdingSelect');
+      const link = document.getElementById('f_linkedHoldingId');
+      if (sel) sel.value = '';
+      if (link) link.value = '';
       updatePreview();
     });
   });
@@ -1741,7 +2036,9 @@ function showFormModal({ title, position, saveLabel, onSave, closeMode }) {
     const openDate = document.getElementById('f_openDate').value;
     const expirationDate = document.getElementById('f_expirationDate').value;
     const closeDateEl = document.getElementById('f_closeDate');
-    const closeDate = closeMode ? today() : (closeDateEl ? closeDateEl.value : '');
+    const closeDate = closeDateEl ? (closeDateEl.value || (closeMode ? today() : '')) : '';
+    const outEl = document.querySelector('input[name="f_outcome"]:checked');
+    const outcome = outEl ? outEl.value : 'premium';
     const strikePrice = +document.getElementById('f_strikePrice').value;
     const typeEl = document.querySelector('input[name="f_type"]:checked');
     const type = typeEl ? typeEl.value : 'put';
@@ -1750,10 +2047,12 @@ function showFormModal({ title, position, saveLabel, onSave, closeMode }) {
     const contracts = +document.getElementById('f_contracts').value;
     const sharesPerContract = +document.getElementById('f_sharesPerContract').value;
     const sellPrice = +document.getElementById('f_sellPrice').value;
-    const buyPrice = +document.getElementById('f_buyPrice').value || 0;
+    // 接貨/交貨：沒有買回，buyPrice=0（權利金全收）
+    const buyPrice = outcome === 'assigned' ? 0 : (+document.getElementById('f_buyPrice').value || 0);
     const commission = +document.getElementById('f_commission').value || 0;
     const holdingCost = +document.getElementById('f_holdingCost')?.value || 0;
     const holdingShares = +document.getElementById('f_holdingShares')?.value || 0;
+    const linkedHoldingId = document.getElementById('f_linkedHoldingId')?.value || '';
 
     if (!stockName) return showToast('請輸入股票名稱', 'error');
     if (!openDate) return showToast('請輸入賣出日期', 'error');
@@ -1762,8 +2061,15 @@ function showFormModal({ title, position, saveLabel, onSave, closeMode }) {
     if (!contracts || contracts <= 0) return showToast('請輸入張數', 'error');
     if (!sharesPerContract || sharesPerContract <= 0) return showToast('請輸入每張股數', 'error');
     if (!sellPrice || sellPrice < 0) return showToast('請輸入賣出價', 'error');
-    if (closeMode && (!document.getElementById('f_buyPrice').value || buyPrice < 0)) {
-      return showToast('平倉時請輸入買入價', 'error');
+    // 收錢平倉才需要買入價；接貨/交貨不需要
+    if (closeMode && outcome !== 'assigned' && (!document.getElementById('f_buyPrice').value || buyPrice < 0)) {
+      return showToast('平倉時請輸入買入價（或改選接貨/交貨）', 'error');
+    }
+    // 接貨/交貨必須有平倉日期
+    if (outcome === 'assigned' && !closeDate) return showToast('請設定接貨/交貨日期', 'error');
+    // CALL 交貨需要有持貨（covered）
+    if (type === 'call' && outcome === 'assigned' && (!holdingCost || holdingCost <= 0)) {
+      return showToast('交貨需要有持貨成本，請先選擇既有持貨或填入持貨成本', 'error');
     }
     if (closeDate && closeDate < openDate) return showToast('買入日不可早於賣出日', 'error');
 
@@ -1772,6 +2078,7 @@ function showFormModal({ title, position, saveLabel, onSave, closeMode }) {
       expirationDate, strikePrice, contracts,
       sharesPerContract, sellPrice, buyPrice, commission,
       holdingCost, holdingShares,
+      outcome, linkedHoldingId: linkedHoldingId || null,
       autoClosed: false   // 手動儲存即視為人工處理過，清除自動平倉標記
     });
     closeModal();
@@ -1783,6 +2090,7 @@ function updatePreview() {
   const type = typeEl ? typeEl.value : 'put';
   const data = {
     type,
+    outcome: (document.querySelector('input[name="f_outcome"]:checked')?.value) || 'premium',
     currency: (document.querySelector('input[name="f_currency"]:checked')?.value) || 'HKD',
     stockName: document.getElementById('f_stockName')?.value || '',
     openDate: document.getElementById('f_openDate')?.value || today(),
@@ -1804,7 +2112,7 @@ function updatePreview() {
   const netLabel = type === 'call' ? '淨股票收益（加期權金）' : '淨股票成本（扣期權金）';
 
   let holdingHtml = '';
-  if (type === 'call' && c.holdingAnalysis) {
+  if (type === 'call' && c.holdingAnalysis && !c.assigned) {
     const h = c.holdingAnalysis;
     const coverageWarn = h.covered ? '' : ' <span class="loss">⚠ 持股不足</span>';
 
@@ -1873,6 +2181,24 @@ function updatePreview() {
     holdingHtml = scenarioHtml;
   }
 
+  // 接貨(PUT)/交貨(CALL)結局的說明區塊
+  let assignedHtml = '';
+  if (c.assigned) {
+    if (c.type === 'put') {
+      assignedHtml = `
+        <div class="label" style="grid-column:1/-1;color:var(--accent);font-weight:600;border-top:1px solid var(--border);padding-top:8px;margin-top:4px">📦 接貨（被指派）</div>
+        <div class="label">接貨股數</div><div class="val">${NUM.format(c.assignShares)}</div>
+        <div class="label">持貨成本（行權價）</div><div class="val">${NUM.format(c.assignCostPerShare)} / 股 · 共 ${HKD.format(c.assignCostTotal)}</div>
+        <div class="label">保本價（行權價−期權金）</div><div class="val">${NUM.format(c.assignBreakevenPerShare)} / 股 · 共 ${HKD.format(c.assignBreakevenTotal)}</div>
+        <div class="label" style="grid-column:1/-1;font-size:12px;background:#ecfdf5;padding:8px;border-radius:4px;border:1px dashed #16a34a">期權金 ${HKD.format(c.sellPremium)} 已全收並計入本筆損益；股票自動建立為持貨（成本 = 行權價），之後用 SHORT CALL 賣出才實現股票損益。</div>
+      `;
+    } else {
+      assignedHtml = `
+        <div class="label" style="grid-column:1/-1;font-size:12px;background:#ecfdf5;padding:8px;border-radius:4px;border:1px dashed #16a34a">📤 交貨：以行權價賣出持股、期權金全收。上方 P&L（${HKD.format(c.profit)}）已含持股損益，連結的持貨會自動平倉。</div>
+      `;
+    }
+  }
+
   document.getElementById('previewGrid').innerHTML = `
     <div class="label" style="grid-column:1/-1;color:var(--accent);font-weight:600">${typeLabel} <span style="font-size:11px;color:var(--muted);font-weight:normal">（計價 ${data.currency || 'HKD'}${data.currency === 'USD' ? ' · ×7.8 港幣' : ''}）</span></div>
     <div class="label">賣出期權金</div><div class="val profit">${HKD.format(c.sellPremium)}</div>
@@ -1889,6 +2215,7 @@ function updatePreview() {
       <div class="val">${dte >= 0 ? dte + ' 天' : '<span class="loss">已過期 ' + (-dte) + ' 天</span>'}</div>
     ` : ''}
     ${holdingHtml}
+    ${assignedHtml}
   `;
 
   // 綁定快速平倉試算器的 input 事件
@@ -1926,6 +2253,22 @@ function setTestPrice(price) {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+// SHORT CALL 表單：從既有持貨帶入成本與股數（onchange 呼叫）
+function applyHoldingToForm(id) {
+  const h = id ? findHolding(id) : null;
+  const costEl = document.getElementById('f_holdingCost');
+  const sharesEl = document.getElementById('f_holdingShares');
+  const linkEl = document.getElementById('f_linkedHoldingId');
+  if (h) {
+    if (costEl) costEl.value = h.costPerShare;
+    if (sharesEl) sharesEl.value = h.shares;
+    if (linkEl) linkEl.value = h.id;
+  } else {
+    if (linkEl) linkEl.value = '';
+  }
+  if (typeof updatePreview === 'function') updatePreview();
+}
+
 // ----- Import / Export -----
 function exportData() {
   const json = JSON.stringify(state, null, 2);
@@ -1951,14 +2294,22 @@ function importData(event) {
       if (!parsed.positions || !Array.isArray(parsed.positions)) {
         throw new Error('檔案格式不正確');
       }
-      if (!confirm(`匯入 ${parsed.positions.length} 筆交易？\n（將合併到現有資料，不會清空）`)) return;
-      const existingIds = new Set(state.positions.map(p => p.id));
+      const inHoldings = Array.isArray(parsed.holdings) ? parsed.holdings.length : 0;
+      if (!confirm(`匯入 ${parsed.positions.length} 筆交易${inHoldings ? `、${inHoldings} 筆持貨` : ''}？\n（將合併到現有資料，不會清空）`)) return;
+      const existingPosIds = new Set(state.positions.map(p => p.id));
       parsed.positions.forEach(p => {
-        if (!existingIds.has(p.id)) state.positions.push(p);
+        if (!existingPosIds.has(p.id)) state.positions.push(p);
       });
+      if (inHoldings) {
+        const existingHIds = new Set(state.holdings.map(h => h.id));
+        parsed.holdings.forEach(h => {
+          if (!existingHIds.has(h.id)) state.holdings.push(h);
+        });
+      }
+      ensureStateShape();
       save();
       render();
-      showToast(`已匯入 ${parsed.positions.length} 筆`, 'success');
+      showToast(`已匯入 ${parsed.positions.length} 筆交易`, 'success');
     } catch (err) {
       showToast('匯入失敗：' + err.message, 'error');
     }
@@ -2031,7 +2382,7 @@ function showApp(user) {
 }
 function showAuth() {
   currentUser = null;
-  state = { positions: [] };
+  state = { positions: [], holdings: [] };
   document.body.classList.remove('authed');
   const box = document.getElementById('userBox');
   if (box) box.style.display = 'none';
