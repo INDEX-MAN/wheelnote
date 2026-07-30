@@ -893,15 +893,16 @@ function calc(p) {
   };
 }
 
-// 到期自動平倉：到期日（含）當天仍未手動平倉，視為「到期未到價（OTM）自動結束」，
-// 買入價設 0（保留全部期權金）、平倉日 = 到期日。已手動平倉或未到期者不處理。
+// 到期自動平倉：到期日「隔天」仍未手動平倉，視為「到期未到價（OTM）自動結束」，
+// 買入價設 0（保留全部期權金）、平倉日 = 到期日。到期日當天不自動結算，讓使用者能在到期日手動標記接貨。
+// 已手動平倉、或尚未到期（含到期日當天）者不處理。
 function applyAutoExpiry() {
   const t = today();
   let changed = false;
   state.positions.forEach(p => {
     if (p.closeDate) return;                           // 已手動平倉
     if (!p.expirationDate) return;                     // 無到期日，無法判斷
-    if (daysBetween(t, p.expirationDate) > 0) return;  // 尚未到期
+    if (daysBetween(t, p.expirationDate) >= 0) return;  // 尚未到期（到期日當天也算，隔天才結算）
     p.closeDate = p.expirationDate;
     p.buyPrice = 0;
     p.autoClosed = true;
