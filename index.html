@@ -146,6 +146,7 @@
   .cal-months { display: flex; gap: 14px; flex-wrap: wrap; }
   .cal-month-frame { flex: 1 1 320px; min-width: 300px; border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: #fff; box-shadow: var(--shadow); }
   .cal-month-title { font-size: 15px; font-weight: 700; text-align: center; margin-bottom: 10px; color: var(--accent); }
+  .cal-month-gz { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 4px; }
   .cal-sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
   .cal-pills { display: flex; gap: 12px; }
   .cal-pill {
@@ -178,6 +179,8 @@
     height: 42px;
     border-radius: 10px;
     display: flex;
+    flex-direction: column;
+    gap: 1px;
     align-items: center;
     justify-content: center;
     font-size: 15px;
@@ -229,6 +232,7 @@
   }
   .cal-cell.has-event.in-month { box-shadow: inset 0 -3px 0 rgba(41,98,255,0.35); }
   .cal-cell .cal-num { font-size: 16px; font-weight: 700; line-height: 1; text-align: center; }
+  .cal-cell .cal-gz { font-size: 9px; font-weight: 500; line-height: 1; color: inherit; opacity: 0.6; text-align: center; }
   .cal-cell .cal-holiday-dot {
     position: absolute;
     top: 3px; right: 5px;
@@ -273,6 +277,8 @@
   @media (max-width: 700px) {
     .cal-cell { height: 34px; }
     .cal-cell .cal-num { font-size: 13px; }
+    .cal-cell .cal-gz { font-size: 8px; }
+    .cal-month-gz { font-size: 10px; }
     .cal-title { font-size: 18px; }
     .cal-pill .n { font-size: 24px; }
     .cal-grid, .cal-weekhead, .cal-week-days, .cal-week-bars { gap: 4px; }
@@ -797,6 +803,25 @@ function daysBetween(a, b) {
   return Math.round((db - da) / (1000 * 60 * 60 * 24));
 }
 
+// ===== 天干地支（干支曆）=====
+const GAN = ['甲','乙','丙','丁','戊','己','庚','辛','壬','癸'];
+const ZHI = ['子','丑','寅','卯','辰','巳','午','未','申','酉','戌','亥'];
+// 日柱：以 2026-07-31 = 丙午日（干支序 42）為基準，逐日推算（60 日一輪）
+function ganzhiDay(dateStr) {
+  if (!dateStr) return '';
+  const idx = (((42 + daysBetween('2026-07-31', dateStr)) % 60) + 60) % 60;
+  return GAN[idx % 10] + ZHI[idx % 12];
+}
+// 月柱：用該格里曆月 15 號代表（15 號必在當月節氣之後，月支固定由格里曆月份決定，避開節氣邊界）
+function ganzhiMonth(year, month0) {
+  const y = month0 === 0 ? year - 1 : year;        // 1 月在立春前，干支年算上一年
+  const yearStem = ((((y - 4) % 60) + 60) % 60) % 10;
+  const monthBranch = (month0 + 1) % 12;           // Jan->丑(1) … Dec->子(0)
+  const yinStem = (yearStem * 2 + 2) % 10;         // 寅月天干（五虎遁）
+  const monthStem = (yinStem + (monthBranch - 2 + 12) % 12) % 10;
+  return GAN[monthStem] + ZHI[monthBranch] + '月';
+}
+
 // ----- Calculations -----
 function calc(p) {
   const shares = +p.sharesPerContract || 0;
@@ -1053,7 +1078,7 @@ function renderMonthCalendar() {
       if (hasEvent) tips.push(`這天做過 ${openDates[key]} 筆交易`);
       const tip = tips.length ? ` title="${tips.join('｜')}"` : '';
       const holidayDot = (holidayName && inMonth) ? `<span class="cal-holiday-dot">●</span>` : '';
-      daysHtml += `<div class="${cls}"${tip}>${holidayDot}<span class="cal-num">${cd}</span></div>`;
+      daysHtml += `<div class="${cls}"${tip}>${holidayDot}<span class="cal-num">${cd}</span><span class="cal-gz">${ganzhiDay(key)}</span></div>`;
     }
 
     // 連接條（可能多列堆疊，用貪心分配 lane）
@@ -1126,6 +1151,7 @@ function renderMonthCalendar() {
         <span class="lg">▶ 開倉日</span>
         <span class="lg">✔ 已平倉 / ⏰ 到期日</span>
         <span class="lg">藍色數字底線＝這天做過交易</span>
+        <span class="lg">干支曆：標題顯示干支月（如乙未月），每日格內小字為干支日（如丙午）</span>
       </div>
     </div>
   `;
@@ -1206,7 +1232,7 @@ function renderOneMonthGrid(year, month, todayStr, openDates) {
       if (hasEvent) tips.push(`這天做過 ${openDates[key]} 筆交易`);
       const tip = tips.length ? ` title="${tips.join('｜')}"` : '';
       const holidayDot = (holidayName && inMonth) ? `<span class="cal-holiday-dot">●</span>` : '';
-      daysHtml += `<div class="${cls}"${tip}>${holidayDot}<span class="cal-num">${cd}</span></div>`;
+      daysHtml += `<div class="${cls}"${tip}>${holidayDot}<span class="cal-num">${cd}</span><span class="cal-gz">${ganzhiDay(key)}</span></div>`;
     }
 
     // 連接條（可能多列堆疊，用貪心分配 lane）
@@ -1241,7 +1267,7 @@ function renderOneMonthGrid(year, month, todayStr, openDates) {
   }
 
   return `<div class="cal-month-frame">
-    <div class="cal-month-title">${year} / ${month + 1}</div>
+    <div class="cal-month-title">${year} / ${month + 1} <span class="cal-month-gz">${ganzhiMonth(year, month)}</span></div>
     <div class="cal-grid">
       <div class="cal-weekhead">${weekHeads.map((h, i) => `<div class="cal-cell cal-head${i >= 5 ? ' weekend' : ''}">${h}</div>`).join('')}</div>
       ${weeksHtml}
