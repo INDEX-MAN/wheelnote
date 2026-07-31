@@ -233,6 +233,9 @@
   .cal-cell.has-event.in-month { box-shadow: inset 0 -3px 0 rgba(41,98,255,0.35); }
   .cal-cell .cal-num { font-size: 16px; font-weight: 700; line-height: 1; text-align: center; }
   .cal-cell .cal-gz { font-size: 9px; font-weight: 500; line-height: 1; color: inherit; opacity: 0.6; text-align: center; }
+  .cal-cell .cal-term { font-size: 8px; font-weight: 700; line-height: 1; color: #0d9488; text-align: center; }
+  .cal-cell.past.in-month .cal-term, .cal-cell.adjacent .cal-term { opacity: 0.5; }
+  .cal-cell.today .cal-term { display: none; }
   .cal-cell .cal-holiday-dot {
     position: absolute;
     top: 3px; right: 5px;
@@ -278,6 +281,7 @@
     .cal-cell { height: 34px; }
     .cal-cell .cal-num { font-size: 13px; }
     .cal-cell .cal-gz { font-size: 8px; }
+    .cal-cell .cal-term { font-size: 7px; }
     .cal-month-gz { font-size: 10px; }
     .cal-title { font-size: 18px; }
     .cal-pill .n { font-size: 24px; }
@@ -822,6 +826,57 @@ function ganzhiMonth(year, month0) {
   return GAN[monthStem] + ZHI[monthBranch] + '月';
 }
 
+// ===== 二十四節氣（天文推算：太陽視黃經到達每 15° 的時刻，轉成港時日期）=====
+const SOLAR_TERMS = [
+  {n:'小寒',t:285},{n:'大寒',t:300},{n:'立春',t:315},{n:'雨水',t:330},
+  {n:'驚蟄',t:345},{n:'春分',t:0},{n:'清明',t:15},{n:'穀雨',t:30},
+  {n:'立夏',t:45},{n:'小滿',t:60},{n:'芒種',t:75},{n:'夏至',t:90},
+  {n:'小暑',t:105},{n:'大暑',t:120},{n:'立秋',t:135},{n:'處暑',t:150},
+  {n:'白露',t:165},{n:'秋分',t:180},{n:'寒露',t:195},{n:'霜降',t:210},
+  {n:'立冬',t:225},{n:'小雪',t:240},{n:'大雪',t:255},{n:'冬至',t:270},
+];
+const _solarTermCache = {};
+function _solarLambda(jd) {                // 太陽視黃經（度）
+  const T = (jd - 2451545.0) / 36525;
+  let L = (280.46646 + 36000.76983*T + 0.0003032*T*T) % 360; L = (L + 360) % 360;
+  let g = (357.52911 + 35999.05029*T - 0.0001537*T*T) % 360; g = (g + 360) % 360;
+  const gr = g * Math.PI / 180;
+  const C = (1.914602 - 0.004817*T - 0.000014*T*T) * Math.sin(gr)
+          + (0.019993 - 0.000101*T) * Math.sin(2*gr)
+          + 0.000289 * Math.sin(3*gr);
+  let lam = L + C; return ((lam % 360) + 360) % 360;
+}
+function _solarTermJD(theta, Y) {          // Y 年太陽通過黃經 theta 的 JD
+  const jd0 = Date.UTC(Y, 6, 1) / 86400000 + 2440587.5;
+  let lam0 = _solarLambda(jd0);
+  let d = (((theta - lam0) % 360) + 360) % 360; if (d > 180) d -= 360;   // 取較近方向
+  let jd = jd0 + d / 0.9856474;
+  for (let i = 0; i < 10; i++) {
+    const lam = _solarLambda(jd);
+    let dd = (((theta - lam) % 360) + 360) % 360; if (dd > 180) dd -= 360;
+    jd += dd / 0.9856474;
+    if (Math.abs(dd) < 0.0001) break;
+  }
+  return jd;
+}
+function _jdToHKDateStr(jd) {              // JD -> 港時(UTC+8) YYYY-MM-DD
+  const dt = new Date((jd - 2440587.5) * 86400000 + 8 * 3600 * 1000);
+  return dt.getUTCFullYear() + '-' + String(dt.getUTCMonth() + 1).padStart(2, '0') + '-' + String(dt.getUTCDate()).padStart(2, '0');
+}
+function solarTermsForYear(Y) {            // 該年 24 節氣 {日期: 名稱}（快取）
+  if (_solarTermCache[Y]) return _solarTermCache[Y];
+  const m = {};
+  for (const term of SOLAR_TERMS) m[_jdToHKDateStr(_solarTermJD(term.t, Y))] = term.n;
+  _solarTermCache[Y] = m;
+  return m;
+}
+function solarTermName(dateStr) {          // 該日是否為節氣，回傳名稱否則 ''
+  if (!dateStr) return '';
+  const Y = +dateStr.slice(0, 4);
+  if (!Y) return '';
+  return solarTermsForYear(Y)[dateStr] || '';
+}
+
 // ----- Calculations -----
 function calc(p) {
   const shares = +p.sharesPerContract || 0;
@@ -1073,12 +1128,15 @@ function renderMonthCalendar() {
       if (isToday) cls += ' today';
       if (hasEvent) cls += ' has-event';
 
+      const termName = solarTermName(key);
       const tips = [];
       if (holidayName) tips.push(holidayName);
+      if (termName) tips.push(termName + '（節氣）');
       if (hasEvent) tips.push(`這天做過 ${openDates[key]} 筆交易`);
       const tip = tips.length ? ` title="${tips.join('｜')}"` : '';
       const holidayDot = (holidayName && inMonth) ? `<span class="cal-holiday-dot">●</span>` : '';
-      daysHtml += `<div class="${cls}"${tip}>${holidayDot}<span class="cal-num">${cd}</span><span class="cal-gz">${ganzhiDay(key)}</span></div>`;
+      const termSpan = termName ? `<span class="cal-term">${termName}</span>` : '';
+      daysHtml += `<div class="${cls}"${tip}>${holidayDot}<span class="cal-num">${cd}</span><span class="cal-gz">${ganzhiDay(key)}</span>${termSpan}</div>`;
     }
 
     // 連接條（可能多列堆疊，用貪心分配 lane）
@@ -1152,6 +1210,7 @@ function renderMonthCalendar() {
         <span class="lg">✔ 已平倉 / ⏰ 到期日</span>
         <span class="lg">藍色數字底線＝這天做過交易</span>
         <span class="lg">干支曆：標題顯示干支月（如乙未月），每日格內小字為干支日（如丙午）</span>
+        <span class="lg"><span style="color:#0d9488;font-weight:700">綠色小字</span>＝該日為二十四節氣轉換（如小暑、立秋）</span>
       </div>
     </div>
   `;
@@ -1227,12 +1286,15 @@ function renderOneMonthGrid(year, month, todayStr, openDates) {
       if (isToday) cls += ' today';
       if (hasEvent) cls += ' has-event';
 
+      const termName = solarTermName(key);
       const tips = [];
       if (holidayName) tips.push(holidayName);
+      if (termName) tips.push(termName + '（節氣）');
       if (hasEvent) tips.push(`這天做過 ${openDates[key]} 筆交易`);
       const tip = tips.length ? ` title="${tips.join('｜')}"` : '';
       const holidayDot = (holidayName && inMonth) ? `<span class="cal-holiday-dot">●</span>` : '';
-      daysHtml += `<div class="${cls}"${tip}>${holidayDot}<span class="cal-num">${cd}</span><span class="cal-gz">${ganzhiDay(key)}</span></div>`;
+      const termSpan = termName ? `<span class="cal-term">${termName}</span>` : '';
+      daysHtml += `<div class="${cls}"${tip}>${holidayDot}<span class="cal-num">${cd}</span><span class="cal-gz">${ganzhiDay(key)}</span>${termSpan}</div>`;
     }
 
     // 連接條（可能多列堆疊，用貪心分配 lane）
