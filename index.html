@@ -596,6 +596,7 @@
             <th>股票 / 行權價</th>
             <th>賣出日</th>
             <th>到期日</th>
+            <th>操作</th>
             <th>剩餘天數</th>
             <th>張數</th>
             <th>每張股數</th>
@@ -606,7 +607,6 @@
             <th>持倉天</th>
             <th>期權金/天</th>
             <th>未實現損益</th>
-            <th>操作</th>
           </tr>
         </thead>
         <tbody id="openBody"></tbody>
@@ -652,6 +652,7 @@
             <th>類型</th>
             <th>股票 / 行權價</th>
             <th>賣出日</th>
+            <th>操作</th>
             <th>買入日</th>
             <th>到期日</th>
             <th>持倉天</th>
@@ -663,7 +664,6 @@
             <th>手續費</th>
             <th>損益 P&L</th>
             <th>報酬率</th>
-            <th>操作</th>
           </tr>
         </thead>
         <tbody id="closedBody"></tbody>
@@ -696,7 +696,7 @@ try {
 }
 let currentUser = null;   // 登入後存 user 物件；未登入為 null
 
-const HKD = new Intl.NumberFormat('zh-HK', { style: 'currency', currency: 'HKD', maximumFractionDigits: 2 });
+const HKD = new Intl.NumberFormat('zh-HK', { style: 'currency', currency: 'HKD', minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const NUM = new Intl.NumberFormat('zh-HK', { maximumFractionDigits: 2 });
 
 // 美元兌港幣固定匯率：美元部位的金額自動以此換算成港幣
@@ -1513,6 +1513,14 @@ function renderOpenPositions() {
         </td>
         <td>${fmtDate(p.openDate)}</td>
         <td>${fmtDate(p.expirationDate)}</td>
+        <td>
+          <div class="actions">
+            <button class="btn-primary btn-sm" onclick="openCloseModal('${p.id}','assigned')" title="${(p.type||'put')==='call'?'被指派交貨':'被指派接貨'}">${(p.type||'put')==='call'?'📤 交貨':'📦 接貨'}</button>
+            <button class="btn-success btn-sm" onclick="openCloseModal('${p.id}')" title="買回權利結束（收錢）">平倉</button>
+            <button class="btn-secondary btn-sm" onclick="openEditModal('${p.id}')">編輯</button>
+            <button class="btn-danger btn-sm" onclick="deletePosition('${p.id}')">刪除</button>
+          </div>
+        </td>
         <td>${expiryBadge(c.daysToExpiry)}</td>
         <td>${NUM.format(p.contracts)}</td>
         <td>${NUM.format(p.sharesPerContract)}</td>
@@ -1523,14 +1531,6 @@ function renderOpenPositions() {
         <td>${c.holdingDays}</td>
         <td class="profit">${HKD.format(c.perDay)}</td>
         <td class="${c.profit >= 0 ? 'profit' : 'loss'}">${HKD.format(c.profit)}</td>
-        <td>
-          <div class="actions">
-            <button class="btn-primary btn-sm" onclick="openCloseModal('${p.id}','assigned')" title="${(p.type||'put')==='call'?'被指派交貨':'被指派接貨'}">${(p.type||'put')==='call'?'📤 交貨':'📦 接貨'}</button>
-            <button class="btn-success btn-sm" onclick="openCloseModal('${p.id}')" title="買回權利結束（收錢）">平倉</button>
-            <button class="btn-secondary btn-sm" onclick="openEditModal('${p.id}')">編輯</button>
-            <button class="btn-danger btn-sm" onclick="deletePosition('${p.id}')">刪除</button>
-          </div>
-        </td>
       </tr>`;
   }).join('');
 }
@@ -1542,7 +1542,7 @@ function renderClosedPositions() {
   document.getElementById('closedCount').textContent = closeds.length > 0 ? `(${closeds.length})` : '';
   const tbody = document.getElementById('closedBody');
   if (closeds.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="14"><div class="empty-state"><div class="icon">📋</div>尚未有平倉紀錄</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="15"><div class="empty-state"><div class="icon">📋</div>尚未有平倉紀錄</div></td></tr>`;
     return;
   }
   tbody.innerHTML = closeds.map(p => {
@@ -1562,6 +1562,13 @@ function renderClosedPositions() {
           <div class="strike-info">行權價 ${NUM.format(toHKD(p, p.strikePrice))}</div>
         </td>
         <td>${fmtDate(p.openDate)}</td>
+        <td>
+          <div class="actions">
+            <button class="btn-primary btn-sm" onclick="duplicatePosition('${p.id}')" title="複製此交易（保留股票/張數/股數/行權價）">📋 複製</button>
+            <button class="btn-secondary btn-sm" onclick="openEditModal('${p.id}')">編輯</button>
+            <button class="btn-danger btn-sm" onclick="deletePosition('${p.id}')">刪除</button>
+          </div>
+        </td>
         <td>${fmtDate(p.closeDate)}</td>
         <td>${fmtDate(p.expirationDate)}</td>
         <td>${c.holdingDays}</td>
@@ -1572,14 +1579,7 @@ function renderClosedPositions() {
         <td>${HKD.format(c.stockCost)}</td>
         <td>${HKD.format(toHKD(p, p.commission))}</td>
         <td class="${profitCls}">${HKD.format(c.profit)}</td>
-        <td class="${profitCls}">${c.returnPct.toFixed(2)}%</td>
-        <td>
-          <div class="actions">
-            <button class="btn-primary btn-sm" onclick="duplicatePosition('${p.id}')" title="複製此交易（保留股票/張數/股數/行權價）">📋 複製</button>
-            <button class="btn-secondary btn-sm" onclick="openEditModal('${p.id}')">編輯</button>
-            <button class="btn-danger btn-sm" onclick="deletePosition('${p.id}')">刪除</button>
-          </div>
-        </td>
+        <td class="${profitCls}">${Number(c.returnPct.toFixed(2))}%</td>
       </tr>`;
   }).join('');
 }
