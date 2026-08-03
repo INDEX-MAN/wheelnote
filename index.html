@@ -1518,11 +1518,12 @@ function renderOpenPositions() {
           <div class="actions">
             <button class="btn-primary btn-sm" onclick="openCloseModal('${p.id}','assigned')" title="${(p.type||'put')==='call'?'被指派交貨':'被指派接貨'}">${(p.type||'put')==='call'?'📤 交貨':'📦 接貨'}</button>
             <button class="btn-success btn-sm" onclick="openCloseModal('${p.id}')" title="買回權利結束（收錢）">平倉</button>
+            <button class="btn-secondary btn-sm" onclick="openRollModal('${p.id}')" title="關舊倉+開新倉（轉倉）">🔄 轉倉</button>
             <button class="btn-secondary btn-sm" onclick="openEditModal('${p.id}')">編輯</button>
             <button class="btn-danger btn-sm" onclick="deletePosition('${p.id}')">刪除</button>
           </div>
         </td>
-        <td>${typeBadge}${curBadge}</td>
+        <td>${typeBadge}${p.rolledFrom ? ' <span class="badge badge-blue" title="由舊倉轉倉而來">🔄轉倉</span>' : ''}${curBadge}</td>
         <td>
           <div class="stock-name">${esc(p.stockName)}</div>
           <div class="strike-info">行權價 ${NUM.format(toHKD(p, p.strikePrice))}</div>
@@ -1571,7 +1572,7 @@ function renderClosedPositions() {
             <button class="btn-danger btn-sm" onclick="deletePosition('${p.id}')">刪除</button>
           </div>
         </td>
-        <td>${typeBadge}${assignBadge}${autoBadge}${curBadge}</td>
+        <td>${typeBadge}${assignBadge}${autoBadge}${p.rolledTo ? ' <span class="badge badge-gray" title="已轉倉到新部位">🔄已轉倉</span>' : ''}${curBadge}</td>
         <td>
           <div class="stock-name">${esc(p.stockName)}</div>
           <div class="strike-info">行權價 ${NUM.format(toHKD(p, p.strikePrice))}</div>
@@ -1821,6 +1822,253 @@ function duplicatePosition(id) {
       showToast('已從舊交易複製並建立新交易', 'success');
     }
   });
+}
+
+// ===== 轉倉（Roll）：關舊倉 + 開新倉，兩筆獨立記帳 =====
+// 轉倉 = 把舊倉以買回價平倉（outcome=premium，損益獨立計入已實現）+ 開一個新部位
+// （新行權價 / 新到期日 / 新賣出價）。兩筆以 rolledFrom / rolledTo 互鏈，僅作標示。
+let _rollP = null;   // 當前轉倉 modal 對應的舊倉 position（updateRollPreview 用）
+
+function openRollModal(id) {
+  const p = state.positions.find(x => x.id === id);
+  if (!p) return;
+  if (p.closeDate) return showToast('此部位已平倉，無法轉倉', 'error');
+  _rollP = p;
+  const cur = p.currency || 'HKD';
+  const curTag = cur === 'USD' ? 'US$' : 'HK$';
+  const typeBadge = (p.type || 'put') === 'call'
+    ? '<span class="badge badge-green">CALL</span>'
+    : '<span class="badge badge-blue">PUT</span>';
+  const container = document.getElementById('modalContainer');
+  container.innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>🔄 轉倉 - ${esc(p.stockName)}</h2>
+          <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="preview-box" style="margin-top:0;margin-bottom:16px">
+            <h3>舊倉（將平倉）</h3>
+            <div class="preview-grid">
+              <div class="label">類型 / 股票</div><div class="val">${typeBadge} ${esc(p.stockName)}</div>
+              <div class="label">行權價</div><div class="val">${NUM.format(toHKD(p, p.strikePrice))} <span style="font-size:10px;color:var(--muted)">(${curTag}${NUM.format(p.strikePrice)})</span></div>
+              <div class="label">到期日</div><div class="val">${fmtDate(p.expirationDate)}</div>
+              <div class="label">賣出價</div><div class="val">${NUM.format(toHKD(p, p.sellPrice))} <span style="font-size:10px;color:var(--muted)">(${curTag}${NUM.format(p.sellPrice)})</span></div>
+              <div class="label">張數 / 每張股數</div><div class="val">${NUM.format(p.contracts)} / ${NUM.format(p.sharesPerContract)}</div>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="form-field">
+              <label>轉倉日期 *</label>
+              <input type="date" id="r_rollDate" value="${today()}">
+              <div class="form-hint">= 舊倉平倉日 = 新倉開倉日</div>
+            </div>
+            <div class="form-field">
+              <label>舊倉買回價（每股 ${curTag}）*</label>
+              <input type="number" id="r_buyOld" value="" step="0.001" min="0" placeholder="平倉舊倉的買回價">
+            </div>
+            <div class="form-field">
+              <label>新行權價（${curTag}）*</label>
+              <input type="number" id="r_newStrike" value="${p.strikePrice}" step="0.01" min="0">
+            </div>
+            <div class="form-field">
+              <label>新到期日 *</label>
+              <input type="date" id="r_newExpiry" value="${p.expirationDate || ''}">
+            </div>
+            <div class="form-field">
+              <label>新賣出價（每股 ${curTag}）*</label>
+              <input type="number" id="r_sellNew" value="" step="0.001" min="0" placeholder="新倉收取的期權金">
+            </div>
+            <div class="form-field">
+              <label>手續費（${curTag}）</label>
+              <input type="number" id="r_commission" value="${p.commission || 0}" step="0.01" min="0">
+              <div class="form-hint">兩腿合計手續費（原幣 ${cur}）</div>
+            </div>
+          </div>
+          <div class="preview-box">
+            <h3>轉倉試算</h3>
+            <div class="preview-grid" id="r_previewGrid"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="closeModal()">取消</button>
+          <button class="btn-primary" id="r_confirmBtn">確認轉倉</button>
+        </div>
+      </div>
+    </div>
+  `;
+  ['r_buyOld','r_newStrike','r_sellNew','r_commission'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateRollPreview);
+  });
+  // 日期欄：支援 6/8 位數字自動格式化，並更新預覽
+  ['r_rollDate','r_newExpiry'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      const digits = el.value.replace(/\D/g, '');
+      let formatted = null;
+      if (digits.length === 6) {
+        const yy = +digits.slice(0,2), mm = +digits.slice(2,4), dd = +digits.slice(4,6);
+        if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+          const y = yy < 50 ? 2000 + yy : 1900 + yy;
+          formatted = `${y}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
+        }
+      } else if (digits.length === 8 && digits.slice(0,4) >= '1900') {
+        const mm = +digits.slice(4,6), dd = +digits.slice(6,8);
+        if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) formatted = `${digits.slice(0,4)}-${digits.slice(4,6)}-${digits.slice(6,8)}`;
+      }
+      if (formatted) el.value = formatted;
+      updateRollPreview();
+    });
+  });
+  updateRollPreview();
+  document.getElementById('r_confirmBtn').addEventListener('click', () => {
+    executeRoll(p.id, {
+      rollDate: document.getElementById('r_rollDate').value,
+      buyOld: +document.getElementById('r_buyOld').value,
+      newStrike: +document.getElementById('r_newStrike').value,
+      newExpiry: document.getElementById('r_newExpiry').value,
+      sellNew: +document.getElementById('r_sellNew').value,
+      commission: +document.getElementById('r_commission').value || 0,
+    });
+  });
+}
+
+function updateRollPreview() {
+  const grid = document.getElementById('r_previewGrid');
+  if (!grid || !_rollP) return;
+  const p = _rollP;
+  const cur = p.currency || 'HKD';
+  const S = +p.sharesPerContract || 0;
+  const N = +p.contracts || 0;
+  const totalShares = S * N;
+  const sellOld = +p.sellPrice || 0;
+  const oldStrike = +p.strikePrice || 0;
+  const oldExpiry = p.expirationDate || '';
+  const buyOld = +document.getElementById('r_buyOld')?.value || 0;
+  const newStrike = +document.getElementById('r_newStrike')?.value || 0;
+  const newExpiry = document.getElementById('r_newExpiry')?.value || '';
+  const sellNew = +document.getElementById('r_sellNew')?.value || 0;
+  const commission = +document.getElementById('r_commission')?.value || 0;
+
+  // 方向標籤（依輸入值推算，僅顯示、不限制輸入）
+  let dirLabel = '';
+  if (oldStrike > 0) {
+    const upDown = newStrike > oldStrike ? '⬆️ 上調' : (newStrike < oldStrike ? '⬇️ 下調' : '➡️ 同價');
+    let out = '';
+    if (newExpiry && oldExpiry) out = newExpiry > oldExpiry ? '延後' : (newExpiry < oldExpiry ? '提前' : '');
+    dirLabel = out ? `${upDown} ${out}` : upDown;
+  }
+
+  if (!(totalShares > 0 && newStrike > 0 && newExpiry)) {
+    grid.innerHTML = `<div class="label" style="grid-column:1/-1;color:var(--muted)">請輸入新行權價與新到期日以試算${dirLabel ? `（目前方向：${dirLabel}）` : ''}</div>`;
+    return;
+  }
+
+  // 計算（原幣）
+  const oldClosePL = (sellOld - buyOld) * totalShares - commission;              // 舊倉平倉損益
+  const newPremium = sellNew * totalShares;                                      // 新倉期權金
+  const rollNet = (sellNew - buyOld) * totalShares - commission;                 // 轉倉淨收付
+  const cumulativeNet = (sellOld - buyOld + sellNew) * totalShares - commission; // 累計淨期權金（兩腿）
+  const cumPerShare = cumulativeNet / totalShares;
+  const newStockCost = newStrike * totalShares;                                  // 新倉被指派風險
+
+  // 有效保本價：PUT = 新行權價 - 累計每股期權金；CALL = 持貨成本 - 累計每股期權金
+  let effBeLabel = '', effBe = null;
+  if ((p.type || 'put') === 'put') {
+    effBe = newStrike - cumPerShare;
+    effBeLabel = '有效保本價（接貨成本）';
+  } else if (+p.holdingCost > 0) {
+    effBe = (+p.holdingCost) - cumPerShare;
+    effBeLabel = '有效保本價（持貨賣出）';
+  }
+
+  const cls = v => v > 0 ? 'profit' : (v < 0 ? 'loss' : 'neutral');
+  const sgn = v => v > 0 ? '+' : '';
+  const dirChip = dirLabel ? ` <span style="font-size:12px;color:var(--muted);font-weight:normal">（${dirLabel}）</span>` : '';
+
+  let html = `
+    <div class="label" style="grid-column:1/-1;color:var(--accent);font-weight:600">轉倉摘要${dirChip}</div>
+    <div class="label">舊倉平倉損益</div><div class="val ${cls(oldClosePL)}">${sgn(oldClosePL)}${HKD.format(toHKD(p, oldClosePL))}</div>
+    <div class="label">新倉期權金</div><div class="val profit">${HKD.format(toHKD(p, newPremium))}</div>
+    <div class="label">轉倉淨收付</div><div class="val ${cls(rollNet)}">${sgn(rollNet)}${HKD.format(toHKD(p, rollNet))} <span style="font-size:10px;color:var(--muted)">${rollNet >= 0 ? '淨收' : '淨付'}</span></div>
+    <div class="label">累計淨期權金</div><div class="val ${cls(cumulativeNet)}">${sgn(cumulativeNet)}${HKD.format(toHKD(p, cumulativeNet))}</div>
+    <div class="label">累計每股淨期權金</div><div class="val">${NUM.format(toHKD(p, cumPerShare))} / 股</div>`;
+  if (effBe !== null) {
+    html += `
+    <div class="label">${effBeLabel}</div><div class="val">${NUM.format(toHKD(p, effBe))} / 股</div>`;
+  }
+  html += `
+    <div class="label">新倉股票成本（被指派風險）</div><div class="val">${HKD.format(toHKD(p, newStockCost))}</div>
+    <div class="label" style="grid-column:1/-1;font-size:11px;color:var(--muted);background:#f6f8fb;padding:8px;border-radius:4px">說明：舊倉以買回價平倉（損益獨立計入已實現）；新倉為全新部位。累計淨期權金 = 兩腿合計（假設新倉到期歸零）。${cur === 'USD' ? '金額已 ×7.8 換算港幣顯示。' : ''}</div>`;
+  grid.innerHTML = html;
+}
+
+function executeRoll(oldId, opt) {
+  const old = state.positions.find(x => x.id === oldId);
+  if (!old) return;
+  if (old.closeDate) return showToast('此部位已平倉，無法轉倉', 'error');
+  const { rollDate, buyOld, newStrike, newExpiry, sellNew, commission } = opt;
+  if (!rollDate) return showToast('請輸入轉倉日期', 'error');
+  if (isNaN(buyOld) || buyOld < 0) return showToast('請輸入有效的舊倉買回價', 'error');
+  if (!newStrike || newStrike <= 0) return showToast('請輸入新行權價', 'error');
+  if (!newExpiry) return showToast('請輸入新到期日', 'error');
+  if (newExpiry <= rollDate) return showToast('新到期日必須晚於轉倉日期', 'error');
+  if (isNaN(sellNew) || sellNew < 0) return showToast('請輸入有效的新賣出價', 'error');
+  if (old.openDate && rollDate < old.openDate) return showToast('轉倉日期不可早於舊倉開倉日', 'error');
+
+  const newId = uid();
+  // 1) 關舊倉：以買回價平倉（premium），損益獨立計入已實現
+  Object.assign(old, {
+    closeDate: rollDate,
+    buyPrice: buyOld,
+    outcome: 'premium',
+    rolledTo: newId,
+    autoClosed: false,
+  });
+  if (old.type === 'put') syncHoldingForPut(old); else syncHoldingForCall(old);
+
+  // 2) 開新倉：沿用 type/幣別/股票/張數/股數；CALL 帶走持貨連結
+  const newPos = {
+    id: newId,
+    type: old.type,
+    currency: old.currency || 'HKD',
+    stockName: old.stockName,
+    openDate: rollDate,
+    closeDate: null,
+    expirationDate: newExpiry,
+    strikePrice: newStrike,
+    contracts: old.contracts,
+    sharesPerContract: old.sharesPerContract,
+    sellPrice: sellNew,
+    buyPrice: 0,
+    commission: commission || 0,
+    holdingCost: old.holdingCost || 0,
+    holdingShares: old.holdingShares || 0,
+    linkedHoldingId: old.linkedHoldingId || null,
+    outcome: 'premium',
+    rolledFrom: old.id,
+    autoClosed: false,
+  };
+  state.positions.push(newPos);
+  if (newPos.type === 'call') {
+    syncHoldingForCall(newPos);
+    // 把持貨連結改指向新 CALL（舊 CALL 已平倉，不再持有此持貨的主動權）
+    if (newPos.linkedHoldingId) {
+      const h = findHolding(newPos.linkedHoldingId);
+      if (h && h.status === 'open') h.linkedCallId = newPos.id;
+    }
+  } else {
+    syncHoldingForPut(newPos);
+  }
+
+  _rollP = null;
+  save();
+  render();
+  closeModal();
+  showToast('已轉倉：舊倉已平倉、新倉已開倉', 'success');
 }
 
 // ===== 持貨（股票）副作用：PUT 接貨建倉 / CALL 交貨平倉 =====
