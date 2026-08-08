@@ -609,6 +609,7 @@
             <th>未實現損益</th>
           </tr>
         </thead>
+        <tfoot id="openFoot"></tfoot>
         <tbody id="openBody"></tbody>
       </table>
     </div>
@@ -1488,10 +1489,14 @@ function renderOpenPositions() {
 
   document.getElementById('openCount').textContent = opens.length > 0 ? `(${opens.length})` : '';
   const tbody = document.getElementById('openBody');
+  const foot = document.getElementById('openFoot');
   if (opens.length === 0) {
     tbody.innerHTML = `<tr><td colspan="15"><div class="empty-state"><div class="icon">📭</div>目前沒有持倉，按「＋ 新增交易」開始記錄</div></td></tr>`;
+    foot.innerHTML = '';
     return;
   }
+  // 持倉中「期權金/天」合計 = 每筆每天期權金收入加總（已轉港幣）
+  const totalPerDay = opens.reduce((s, p) => s + calc(p).perDay, 0);
   tbody.innerHTML = opens.map(p => {
     const c = calc(p);
     const typeBadge = c.type === 'call'
@@ -1542,6 +1547,12 @@ function renderOpenPositions() {
         <td class="${c.profit >= 0 ? 'profit' : 'loss'}">${HKD.format(c.profit)}</td>
       </tr>`;
   }).join('');
+  // 合計列：每天期權金總收入，顯示在「期權金/天」欄下方
+  foot.innerHTML = `<tr style="background:var(--bg);font-weight:600">
+      <td colspan="13" style="text-align:right;color:var(--muted)">每天期權金合計</td>
+      <td class="profit" style="font-size:14px">${HKD.format(totalPerDay)}</td>
+      <td></td>
+    </tr>`;
 }
 
 function renderClosedPositions() {
