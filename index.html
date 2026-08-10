@@ -617,8 +617,9 @@
 
   <section class="section" id="holdingsSection">
     <div class="section-header">
-      <h2>📦 持貨中（股票） <span class="count" id="holdingsCount"></span></h2>
+      <h2>📦 购入股票 / 持貨 <span class="count" id="holdingsCount"></span></h2>
       <div class="add-buttons">
+        <button class="btn-primary btn-sm" onclick="openPurchaseStockModal()">＋ 购入股票</button>
         <button class="btn-success btn-sm" onclick="openNewModal('call')">＋ 開 SHORT CALL</button>
       </div>
     </div>
@@ -629,11 +630,11 @@
             <th>股票</th>
             <th>幣別</th>
             <th>股數</th>
-            <th>成本（行權價）</th>
-            <th>保本價（−期權金）</th>
+            <th>成本價</th>
+            <th>保本價</th>
             <th>總成本</th>
             <th>來源</th>
-            <th>接貨日</th>
+            <th>買入日</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -1404,11 +1405,7 @@ function renderDashboard() {
   const wins = closeds.filter(p => calc(p).profit > 0).length;
   const winRate = closeds.length > 0 ? (wins / closeds.length) * 100 : 0;
   const unrealized = opens.reduce((s, p) => s + calc(p).profit, 0);
-  const openPutStockCost = openPuts.reduce((s, p) => s + calc(p).stockCost, 0);   // SHORT PUT 接貨成本（被指派時以行權價買股票）
-  const openCallStockCost = openCalls.reduce((s, p) => {                           // SHORT CALL 接貨成本（手動輸入的持股買入成本）
-    const c = calc(p);
-    return s + (c.holdingAnalysis ? c.holdingAnalysis.holdingTotalCost : 0);
-  }, 0);
+  const openPutStockCost = openPuts.reduce((s, p) => s + calc(p).stockCost, 0);   // SHORT PUT 接貨成本（被指派時以行權價買股票；潛在成本）
   const openHoldings = state.holdings.filter(h => h.status === 'open');
   const openHoldingsCost = openHoldings.reduce((s, h) => s + toHKD(h, h.costPerShare) * (+h.shares || 0), 0);
   // 平均每張期權每天收入：每筆已平倉 = 淨期權金 / 持倉天 / 張數，再取平均（含虧損/平手單）
@@ -1450,14 +1447,9 @@ function renderDashboard() {
       <div class="sublabel">${openPuts.length} 筆 PUT 持倉（被指派買股票）</div>
     </div>
     <div class="stat-card">
-      <div class="label">未平倉 SHORT CALL 接貨成本</div>
-      <div class="value">${HKD.format(openCallStockCost)}</div>
-      <div class="sublabel">${openCalls.length} 筆 CALL 持倉（手動輸入持股成本）</div>
-    </div>
-    <div class="stat-card">
       <div class="label">持貨總成本（股票）</div>
       <div class="value">${HKD.format(openHoldingsCost)}</div>
-      <div class="sublabel">${openHoldings.length} 筆持貨中（PUT 接貨）</div>
+      <div class="sublabel">${openHoldings.length} 筆持貨中（购入股票）</div>
     </div>
     <div class="stat-card">
       <div class="label">平均每張期權每天收入</div>
@@ -1477,7 +1469,7 @@ function renderSummary() {
   const openHoldingsCount = state.holdings.filter(h => h.status === 'open').length;
   document.getElementById('summaryBar').innerHTML = `
     <span>持倉中 <strong>${opens.length}</strong> 筆 (PUT <strong>${openPuts}</strong> / CALL <strong>${openCalls}</strong>)</span>
-    <span>持貨 <strong>${openHoldingsCount}</strong> 筆（PUT 接貨的股票）</span>
+    <span>持貨 <strong>${openHoldingsCount}</strong> 筆（购入股票）</span>
     <span>已平倉 <strong>${closeds.length}</strong> 筆</span>
     <span>總手續費 <strong>${HKD.format(totalCommission)}</strong></span>
     ${hasUSD ? '<span style="color:var(--muted)">美元(USD)部位已 ×7.8 換算港幣顯示</span>' : ''}
@@ -1620,7 +1612,7 @@ function renderHoldings() {
   document.getElementById('holdingsCount').textContent = opens.length > 0 ? `(${opens.length})` : '';
   const tbody = document.getElementById('holdingsBody');
   if (opens.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><div class="icon">📦</div>目前沒有持貨。SHORT PUT 接貨後會自動建立在這裡。</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><div class="icon">📦</div>目前沒有持貨。可按「＋ 购入股票」手動輸入，或 SHORT PUT 接貨後自動建立。</div></td></tr>`;
     return;
   }
   tbody.innerHTML = opens.map(h => {
@@ -1628,6 +1620,9 @@ function renderHoldings() {
     const totalCost = toHKD(h, h.costPerShare) * (+h.shares || 0);
     const breakeven = h.breakevenPrice != null ? h.breakevenPrice : (h.costPerShare - (h.premiumPerShare || 0));
     const source = h.sourcePositionId ? state.positions.find(p => p.id === h.sourcePositionId) : null;
+    const sourceCell = source
+      ? `${esc(source.stockName)} <span class="strike-info">@ ${NUM.format(toHKD(source, source.strikePrice))}</span>`
+      : `<span style="color:var(--muted)">手動輸入</span>`;
     return `
       <tr>
         <td><span class="stock-name">${esc(h.stockName)}</span></td>
@@ -1636,7 +1631,7 @@ function renderHoldings() {
         <td>${NUM.format(toHKD(h, h.costPerShare))}</td>
         <td>${NUM.format(toHKD(h, breakeven))}</td>
         <td>${HKD.format(totalCost)}</td>
-        <td>${source ? esc(source.stockName) : '-'}${source ? ` <span class="strike-info">@ ${NUM.format(toHKD(source, source.strikePrice))}</span>` : ''}</td>
+        <td>${sourceCell}</td>
         <td>${fmtDate(h.openDate)}</td>
         <td>
           <div class="actions">
@@ -1711,6 +1706,86 @@ function openCallFromHolding(id) {
       render();
       showToast('已新增 Short Call（持貨已帶入）', 'success');
     }
+  });
+}
+
+// 手動输入住购入股票：直接建立一筆持貨（不必經過 PUT 接貨）
+// 與 PUT 接貨自動建立的持貨並存，兩者都能用「開 CALL」按鈕開 SHORT CALL
+function openPurchaseStockModal() {
+  const container = document.getElementById('modalContainer');
+  container.innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>＋ 购入股票</h2>
+          <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="form-field full">
+              <label>股票名稱 *</label>
+              <input type="text" id="p_stockName" placeholder="例如：騰訊、HSI、388" required>
+            </div>
+            <div class="form-field full">
+              <label>計價幣別 *</label>
+              <div class="radio-group">
+                <label class="radio-label"><input type="radio" name="p_currency" value="HKD" checked> 港幣 HKD</label>
+                <label class="radio-label"><input type="radio" name="p_currency" value="USD"> 美元 USD（自動 ×7.8 換算港幣）</label>
+              </div>
+              <div class="form-hint">成本價依此幣別輸入；USD 會自動換算港幣顯示</div>
+            </div>
+            <div class="form-field">
+              <label>股數 *</label>
+              <input type="number" id="p_shares" step="1" min="1" placeholder="例如 1000">
+            </div>
+            <div class="form-field">
+              <label>每股成本價 *</label>
+              <input type="number" id="p_costPerShare" step="0.01" min="0" placeholder="例如 50.5">
+            </div>
+            <div class="form-field">
+              <label>買入日期 *</label>
+              <input type="date" id="p_openDate" value="${today()}">
+            </div>
+            <div class="form-field full">
+              <div class="form-hint">建立後可在持貨表用「開 CALL」對這批股票賣 SHORT CALL。無期權金，保本價 = 成本價。</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="closeModal()">取消</button>
+          <button class="btn-primary" id="p_saveBtn">儲存</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('p_saveBtn').addEventListener('click', () => {
+    const stockName = document.getElementById('p_stockName').value.trim();
+    const currency = document.querySelector('input[name="p_currency"]:checked')?.value || 'HKD';
+    const shares = +document.getElementById('p_shares').value || 0;
+    const costPerShare = +document.getElementById('p_costPerShare').value || 0;
+    const openDate = document.getElementById('p_openDate').value || today();
+    if (!stockName) return showToast('請輸入股票名稱', 'error');
+    if (shares <= 0) return showToast('請輸入股數', 'error');
+    if (costPerShare <= 0) return showToast('請輸入每股成本價', 'error');
+    const h = {
+      id: uid(),
+      status: 'open',
+      stockName,
+      currency,
+      shares,
+      costPerShare,                  // 實際買入成本（算損益用）
+      breakevenPrice: costPerShare,  // 無期權金，保本價 = 成本
+      premiumPerShare: 0,
+      strikePrice: null,
+      openDate,
+      sourcePositionId: null,        // 標記為手動输入住（非 PUT 接貨）
+      realizedPL: 0,
+    };
+    state.holdings.push(h);
+    save();
+    render();
+    closeModal();
+    showToast(`已新增持貨：${stockName} ${NUM.format(shares)}股`, 'success');
   });
 }
 
