@@ -1404,7 +1404,8 @@ function renderDashboard() {
   const wins = closeds.filter(p => calc(p).profit > 0).length;
   const winRate = closeds.length > 0 ? (wins / closeds.length) * 100 : 0;
   const unrealized = opens.reduce((s, p) => s + calc(p).profit, 0);
-  const openStockCost = opens.reduce((s, p) => s + calc(p).stockCost, 0);
+  const openPutStockCost = openPuts.reduce((s, p) => s + calc(p).stockCost, 0);   // SHORT PUT 接貨成本（被指派時買股票所費）
+  const openCallStockCost = openCalls.reduce((s, p) => s + calc(p).stockCost, 0); // SHORT CALL 交貨金額（被指派時賣股票所得）
   const openHoldings = state.holdings.filter(h => h.status === 'open');
   const openHoldingsCost = openHoldings.reduce((s, h) => s + toHKD(h, h.costPerShare) * (+h.shares || 0), 0);
   // 平均每張期權每天收入：每筆已平倉 = 淨期權金 / 持倉天 / 張數，再取平均（含虧損/平手單）
@@ -1441,9 +1442,14 @@ function renderDashboard() {
       <div class="sublabel">${opens.length} 筆持倉中</div>
     </div>
     <div class="stat-card">
-      <div class="label">未平倉購買股票成本</div>
-      <div class="value">${HKD.format(openStockCost)}</div>
-      <div class="sublabel">${opens.length} 筆持倉中</div>
+      <div class="label">未平倉 SHORT PUT 接貨成本</div>
+      <div class="value">${HKD.format(openPutStockCost)}</div>
+      <div class="sublabel">${openPuts.length} 筆 PUT 持倉（被指派買股票）</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">未平倉 SHORT CALL 交貨金額</div>
+      <div class="value">${HKD.format(openCallStockCost)}</div>
+      <div class="sublabel">${openCalls.length} 筆 CALL 持倉（被指派賣股票）</div>
     </div>
     <div class="stat-card">
       <div class="label">持貨總成本（股票）</div>
