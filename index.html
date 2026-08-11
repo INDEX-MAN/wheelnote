@@ -318,6 +318,7 @@
     font-size: 13px;
     white-space: nowrap;
   }
+  .subtotal-row td { background: var(--bg); font-weight: 600; border-top: 2px solid var(--border); }
   th:first-child, td:first-child { text-align: left; }
   th {
     background: #fafbfc;
@@ -1498,8 +1499,12 @@ function renderOpenPositions() {
   }
   // 持倉中「期權金/天」合計 = 每筆每天期權金收入加總（已轉港幣）
   const totalPerDay = opens.reduce((s, p) => s + calc(p).perDay, 0);
-  tbody.innerHTML = opens.map(p => {
+  // 按到期日分組：每組最後一筆後插入「購買股票成本」小計列（stockCost 已轉港幣）
+  const rows = [];
+  let groupStockCost = 0;
+  opens.forEach((p, i) => {
     const c = calc(p);
+    groupStockCost += c.stockCost;
     const typeBadge = c.type === 'call'
       ? '<span class="badge badge-green">CALL</span>'
       : '<span class="badge badge-blue">PUT</span>';
@@ -1518,7 +1523,7 @@ function renderOpenPositions() {
         holdingCell = `<td><span style="color:var(--muted)">未填</span></td>`;
       }
     }
-    return `
+    rows.push(`
       <tr>
         <td>
           <div class="actions">
@@ -1546,8 +1551,20 @@ function renderOpenPositions() {
         <td>${c.holdingDays}</td>
         <td class="profit">${HKD.format(c.perDay)}</td>
         <td class="${c.profit >= 0 ? 'profit' : 'loss'}">${HKD.format(c.profit)}</td>
-      </tr>`;
-  }).join('');
+      </tr>`);
+    // 同到期日分組結束：插入小計列（該到期日的購買股票成本合計）
+    const isLastInGroup = (i === opens.length - 1) || (opens[i + 1].expirationDate !== p.expirationDate);
+    if (isLastInGroup) {
+      const dateLabel = p.expirationDate ? fmtDateShort(p.expirationDate) : '無到期日';
+      rows.push(`<tr class="subtotal-row">
+          <td colspan="10" style="text-align:right;color:var(--muted)">${dateLabel} 小計（購買股票成本）</td>
+          <td style="font-size:14px">${HKD.format(groupStockCost)}</td>
+          <td colspan="4"></td>
+        </tr>`);
+      groupStockCost = 0;
+    }
+  });
+  tbody.innerHTML = rows.join('');
   // 合計列：每天期權金總收入，顯示在「期權金/天」欄下方
   foot.innerHTML = `<tr style="background:var(--bg);font-weight:600">
       <td colspan="13" style="text-align:right;color:var(--muted)">每天期權金合計</td>
