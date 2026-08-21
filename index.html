@@ -164,6 +164,12 @@
     box-shadow: 0 4px 12px rgba(41,98,255,0.3);
   }
   .cal-pill.passed { background: #eef1f6; color: var(--muted); }
+  .cal-pill.week {
+    background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(13,148,136,0.3);
+  }
+  .cal-pill.week .n { font-size: 16px; font-weight: 800; padding-top: 8px; }
 
   .cal-grid { display: flex; flex-direction: column; gap: 6px; }
   .cal-weekhead, .cal-week-days, .cal-week-bars {
@@ -200,19 +206,19 @@
   }
   .cal-head.weekend { color: var(--red); }
   /* 本月各種日子狀態，各自不同顏色 */
-  .cal-cell.in-month { border: 1px solid var(--border); }
-  .cal-cell.in-month:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
-  .cal-cell.adjacent { color: #cbd3df; background: #fcfdfe; border: 1px dashed #eef1f6; }
+  .cal-cell.in-month { border: 1.5px solid #c9d6ea; background: #fff; box-shadow: 0 1px 3px rgba(30,50,100,0.10); }
+  .cal-cell.in-month:hover { transform: translateY(-2px); box-shadow: var(--shadow); border-color: var(--accent); }
+  .cal-cell.adjacent { color: #cbd3df; background: #f5f7fa; border: 1px dashed #e3e8ef; }
   /* 已過去的日子：灰色 */
-  .cal-cell.past.in-month { background: #eef1f5; color: #9aa5b4; border-color: #e3e8ef; }
-  /* 之後（未來）的日子：淺藍白 */
-  .cal-cell.future.in-month { background: #f4f8ff; color: var(--text); border-color: #dbe7ff; }
+  .cal-cell.past.in-month { background: #e6ebf2; color: #8b96a6; border-color: #d3dbe8; }
+  /* 之後（未來）的日子：淡藍 */
+  .cal-cell.future.in-month { background: #eaf2ff; color: var(--text); border-color: #c3d8fb; }
   /* 週末（未過）：紅色系 */
-  .cal-cell.weekend.in-month.future { background: var(--red-bg); color: var(--red); border-color: #fde0e0; }
-  .cal-cell.weekend.in-month.past { background: #f7ecec; color: #c99; border-color: #f0dede; }
+  .cal-cell.weekend.in-month.future { background: var(--red-bg); color: var(--red); border-color: #f7c9c9; }
+  .cal-cell.weekend.in-month.past { background: #f3e3e3; color: #c89; border-color: #ecd7d7; }
   /* 節假日（未過）：紫色系 */
-  .cal-cell.holiday.in-month.future { background: #f5f0ff; color: #7c3aed; border-color: #e6d9ff; }
-  .cal-cell.holiday.in-month.past { background: #f0ecf7; color: #a996c9; border-color: #e6ddf0; }
+  .cal-cell.holiday.in-month.future { background: #ece3fb; color: #6f2ee0; border-color: #dcc9ff; }
+  .cal-cell.holiday.in-month.past { background: #e6def4; color: #a08cc6; border-color: #ddd0f0; }
   /* 今天：藍色漸層，最醒目 */
   .cal-cell.today {
     background: linear-gradient(135deg, #2962ff 0%, #1e3a8a 100%) !important;
@@ -1058,6 +1064,10 @@ function renderMonthCalendar() {
     ? `${sY} / ${sM + 1} - ${eM + 1}`
     : `${sY} / ${sM + 1} - ${eY} / ${eM + 1}`;
 
+  // 今天在「本月月曆」裡是第幾週（以週一當週起算）
+  const firstDowOfStart = (new Date(sY, sM, 1).getDay() + 6) % 7; // 週一=0…週日=6
+  const weekOfMonth = Math.floor((firstDowOfStart + todayDate - 1) / 7) + 1;
+
   // 網格第一格 = 起始月 1 號往前推到週一
   const firstDow = (new Date(sY, sM, 1).getDay() + 6) % 7; // 週一=0…週日=6
   const gridStart = new Date(sY, sM, 1 - firstDow);
@@ -1206,6 +1216,10 @@ function renderMonthCalendar() {
           <div class="cal-pill left">
             <div class="n">${daysLeft}</div>
             <div class="t">剩餘天數</div>
+          </div>
+          <div class="cal-pill week">
+            <div class="n">第${weekOfMonth}週</div>
+            <div class="t">本月進度</div>
           </div>
         </div>
       </div>
