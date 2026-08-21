@@ -169,7 +169,6 @@
     color: white;
     box-shadow: 0 4px 12px rgba(13,148,136,0.3);
   }
-  .cal-pill.week .n { font-size: 16px; font-weight: 800; padding-top: 8px; }
 
   .cal-grid { display: flex; flex-direction: column; gap: 6px; }
   .cal-weekhead, .cal-week-days, .cal-week-bars {
@@ -1219,8 +1218,8 @@ function renderMonthCalendar() {
             <div class="t">剩餘天數</div>
           </div>
           <div class="cal-pill week">
-            <div class="n">第${weekOfMonth}<span style="font-size:12px;font-weight:600;opacity:.8">/${totalWeeksInMonth}</span>週</div>
-            <div class="t">本月週數</div>
+            <div class="n">${weekOfMonth}/${totalWeeksInMonth}</div>
+            <div class="t">週數</div>
           </div>
         </div>
       </div>
