@@ -262,6 +262,9 @@
   .cal-bar-seg.call { background: linear-gradient(90deg, #22c55e, #15803d); }
   .cal-bar-seg.open { opacity: 0.92; }
   .cal-bar-seg .bar-end { margin-left: auto; font-size: 12px; }
+  .cal-bar-seg { position: relative; cursor: pointer; transition: filter .15s ease, box-shadow .15s ease; }
+  .cal-bar-seg:hover { filter: brightness(1.15); }
+  .cal-bar-seg.highlight { z-index: 5; box-shadow: 0 0 0 2px var(--accent), 0 0 12px 3px rgba(99, 200, 255, .45); opacity: 1; filter: brightness(1.18); }
   .cal-legend {
     display: flex;
     gap: 16px;
@@ -1104,6 +1107,7 @@ function renderMonthCalendar() {
       const isRealEnd = segEnd === endIdx;     // 真正的結束日在這一段
       segsByWeek[wk].push({
         colStart, span, type, stateCls, label, isRealStart, isRealEnd,
+        pid: p.id,
         tip: `${esc(p.stockName)}（${type === 'call' ? 'CALL' : 'PUT'}）${fmtDate(p.openDate)} → ${fmtDate(endDateStr)}，共 ${totalDays} 天${p.closeDate ? '（已平倉）' : '（持倉中）'}`,
       });
       idx = segEnd + 1;
@@ -1168,7 +1172,7 @@ function renderMonthCalendar() {
       const radiusR = s.isRealEnd ? '10px' : '2px';
       const startDot = s.isRealStart ? '▶' : '';
       const endDot = s.isRealEnd ? (s.stateCls ? '⏰' : '✔') : '';
-      barsHtml += `<div class="cal-bar-seg ${s.type}${s.stateCls}" title="${s.tip}" style="grid-column:${s.colStart + 1}/span ${s.span};grid-row:${s.lane + 1};border-radius:${radiusL} ${radiusR} ${radiusR} ${radiusL}">`
+      barsHtml += `<div class="cal-bar-seg ${s.type}${s.stateCls}" data-pos="${s.pid}" title="${s.tip}" onclick="togglePosHighlight(this)" style="grid-column:${s.colStart + 1}/span ${s.span};grid-row:${s.lane + 1};border-radius:${radiusL} ${radiusR} ${radiusR} ${radiusL}">`
         + `${startDot ? `<span>${startDot}</span>` : ''}`
         + `<span style="overflow:hidden;text-overflow:ellipsis">${s.isRealStart ? s.label : ''}</span>`
         + `${endDot ? `<span class="bar-end">${endDot}</span>` : ''}`
@@ -1265,6 +1269,7 @@ function renderOneMonthGrid(year, month, todayStr, openDates) {
       const isRealEnd = segEnd === endIdx;     // 真正的結束日在這一段
       segsByWeek[wk].push({
         colStart, span, type, stateCls, label, isRealStart, isRealEnd,
+        pid: p.id,
         tip: `${esc(p.stockName)}（${type === 'call' ? 'CALL' : 'PUT'}）${fmtDate(p.openDate)} -> ${fmtDate(endDateStr)}，共 ${totalDays} 天${p.closeDate ? '（已平倉）' : '（持倉中）'}`,
       });
       idx = segEnd + 1;
@@ -1326,7 +1331,7 @@ function renderOneMonthGrid(year, month, todayStr, openDates) {
       const radiusR = s.isRealEnd ? '10px' : '2px';
       const startDot = s.isRealStart ? '▶' : '';
       const endDot = s.isRealEnd ? (s.stateCls ? '⏰' : '✔') : '';
-      barsHtml += `<div class="cal-bar-seg ${s.type}${s.stateCls}" title="${s.tip}" style="grid-column:${s.colStart + 1}/span ${s.span};grid-row:${s.lane + 1};border-radius:${radiusL} ${radiusR} ${radiusR} ${radiusL}">`
+      barsHtml += `<div class="cal-bar-seg ${s.type}${s.stateCls}" data-pos="${s.pid}" title="${s.tip}" onclick="togglePosHighlight(this)" style="grid-column:${s.colStart + 1}/span ${s.span};grid-row:${s.lane + 1};border-radius:${radiusL} ${radiusR} ${radiusR} ${radiusL}">`
         + `${startDot ? `<span>${startDot}</span>` : ''}`
         + `<span style="overflow:hidden;text-overflow:ellipsis">${s.isRealStart ? s.label : ''}</span>`
         + `${endDot ? `<span class="bar-end">${endDot}</span>` : ''}`
@@ -1346,6 +1351,19 @@ function renderOneMonthGrid(year, month, todayStr, openDates) {
       ${weeksHtml}
     </div>
   </div>`;
+}
+
+// 點擊某筆期權的時間條：讓該筆期權在月曆裡的所有月份、所有週的橫條一起 highlight（再點一次取消）
+function togglePosHighlight(el) {
+  const pos = el.getAttribute('data-pos');
+  const all = document.querySelectorAll('#monthCalendar .cal-bar-seg[data-pos]');
+  const wasOn = el.classList.contains('highlight');
+  all.forEach(s => s.classList.remove('highlight'));
+  if (!wasOn) {
+    all.forEach(s => {
+      if (s.getAttribute('data-pos') === pos) s.classList.add('highlight');
+    });
+  }
 }
 
 // ----- 月總結：把每個月份分開統計 -----
