@@ -1064,9 +1064,10 @@ function renderMonthCalendar() {
     ? `${sY} / ${sM + 1} - ${eM + 1}`
     : `${sY} / ${sM + 1} - ${eY} / ${eM + 1}`;
 
-  // 今天在「本月月曆」裡是第幾週（以週一當週起算）
+  // 今天在「本月月曆」裡是第幾週（以週一當週起算），以及本總共有幾週
   const firstDowOfStart = (new Date(sY, sM, 1).getDay() + 6) % 7; // 週一=0…週日=6
   const weekOfMonth = Math.floor((firstDowOfStart + todayDate - 1) / 7) + 1;
+  const totalWeeksInMonth = Math.floor((firstDowOfStart + daysInMonth - 1) / 7) + 1;
 
   // 網格第一格 = 起始月 1 號往前推到週一
   const firstDow = (new Date(sY, sM, 1).getDay() + 6) % 7; // 週一=0…週日=6
@@ -1218,8 +1219,8 @@ function renderMonthCalendar() {
             <div class="t">剩餘天數</div>
           </div>
           <div class="cal-pill week">
-            <div class="n">第${weekOfMonth}週</div>
-            <div class="t">本月進度</div>
+            <div class="n">第${weekOfMonth}<span style="font-size:12px;font-weight:600;opacity:.8">/${totalWeeksInMonth}</span>週</div>
+            <div class="t">本月週數</div>
           </div>
         </div>
       </div>
