@@ -87,6 +87,11 @@
   .stat-card .value { font-size: 24px; font-weight: 700; }
   .stat-card .value.positive { color: var(--green); }
   .stat-card .value.negative { color: var(--red); }
+  .stat-card .pl-lines { display: flex; flex-direction: column; gap: 2px; }
+  .stat-card .pl-line { font-size: 18px; font-weight: 700; }
+  .stat-card .pl-line .pl-ccy { font-size: 11px; color: var(--muted); font-weight: 600; margin-right: 5px; }
+  .stat-card .pl-line.positive { color: var(--green); }
+  .stat-card .pl-line.negative { color: var(--red); }
   .stat-card .sublabel { font-size: 11px; color: var(--muted); margin-top: 4px; }
 
   .summary-bar {
@@ -709,6 +714,7 @@ try {
 let currentUser = null;   // 登入後存 user 物件；未登入為 null
 
 const HKD = new Intl.NumberFormat('zh-HK', { style: 'currency', currency: 'HKD', minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const NUM = new Intl.NumberFormat('zh-HK', { maximumFractionDigits: 2 });
 
 // 美元兌港幣固定匯率：美元部位的金額自動以此換算成港幣
@@ -1459,10 +1465,27 @@ function renderDashboard() {
   const profitClass = totalProfit > 0 ? 'positive' : totalProfit < 0 ? 'negative' : '';
   const unrealizedClass = unrealized > 0 ? 'positive' : unrealized < 0 ? 'negative' : '';
 
+  // 已實現 / 未實現損益：依「原幣別」分開統計（不做 ×7.8 換算，美元就顯示 US$）
+  const curRate = (c) => c === 'USD' ? USD_HKD_RATE : 1;
+  const byCurr = (list, native) => list.reduce((acc, x) => {
+    const k = x.currency === 'USD' ? 'USD' : 'HKD';
+    acc[k] += native(x);
+    return acc;
+  }, { HKD: 0, USD: 0 });
+  const realizedByCurr = byCurr(closeds, p => calc(p).profit / curRate(p.currency));
+  const holdB = byCurr(state.holdings, h => +h.realizedPL || 0); // 持股已賣出的原幣損益
+  realizedByCurr.HKD += holdB.HKD;
+  realizedByCurr.USD += holdB.USD;
+  const unrealizedByCurr = byCurr(opens, p => calc(p).profit / curRate(p.currency));
+  const plCls = (v) => v > 0 ? 'positive' : v < 0 ? 'negative' : '';
+
   document.getElementById('dashboard').innerHTML = `
     <div class="stat-card">
       <div class="label">已實現損益</div>
-      <div class="value ${profitClass}">${HKD.format(totalProfit)}</div>
+      <div class="pl-lines">
+        <div class="pl-line ${plCls(realizedByCurr.HKD)}"><span class="pl-ccy">HKD</span>${HKD.format(realizedByCurr.HKD)}</div>
+        <div class="pl-line ${plCls(realizedByCurr.USD)}"><span class="pl-ccy">USD</span>${USD.format(realizedByCurr.USD)}</div>
+      </div>
       <div class="sublabel">${closeds.length} 筆已平倉</div>
     </div>
     <div class="stat-card">
@@ -1472,7 +1495,10 @@ function renderDashboard() {
     </div>
     <div class="stat-card">
       <div class="label">未實現損益</div>
-      <div class="value ${unrealizedClass}">${HKD.format(unrealized)}</div>
+      <div class="pl-lines">
+        <div class="pl-line ${plCls(unrealizedByCurr.HKD)}"><span class="pl-ccy">HKD</span>${HKD.format(unrealizedByCurr.HKD)}</div>
+        <div class="pl-line ${plCls(unrealizedByCurr.USD)}"><span class="pl-ccy">USD</span>${USD.format(unrealizedByCurr.USD)}</div>
+      </div>
       <div class="sublabel">${opens.length} 筆持倉中</div>
     </div>
     <div class="stat-card">
