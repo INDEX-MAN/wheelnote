@@ -629,7 +629,6 @@
             <th>賣出價</th>
             <th>賣出期權金</th>
             <th>購買股票成本</th>
-            <th>持貨成本 / 保本價</th>
             <th>持倉天</th>
             <th>期權金/天</th>
             <th>未實現損益</th>
@@ -1621,7 +1620,7 @@ function renderOpenPositions() {
   const tbody = document.getElementById('openBody');
   const foot = document.getElementById('openFoot');
   if (opens.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="15"><div class="empty-state"><div class="icon">📭</div>目前沒有持倉，按「＋ 新增交易」開始記錄</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="14"><div class="empty-state"><div class="icon">📭</div>目前沒有持倉，按「＋ 新增交易」開始記錄</div></td></tr>`;
     foot.innerHTML = '';
     return;
   }
@@ -1637,27 +1636,12 @@ function renderOpenPositions() {
     const rate = isUSD ? USD_HKD_RATE : 1;
     const money = (v) => (isUSD ? USD : HKD).format(v / rate);   // calc 輸出為港幣 → 換回原幣別顯示
     const num = (v) => NUM.format(v / rate);                     // 同上，純數字
-    const curSym = isUSD ? 'US$' : 'HK$';
     if (isUSD) groupStockUSD += c.stockCost / USD_HKD_RATE;
     else groupStockHKD += c.stockCost;
     const typeBadge = c.type === 'call'
       ? '<span class="badge badge-green">CALL</span>'
       : '<span class="badge badge-blue">PUT</span>';
     const curBadge = p.currency === 'USD' ? ' <span class="badge" style="background:#eef2ff;color:#4338ca">USD</span>' : '';
-    // 持貨成本 / 保本價欄：PUT 顯示「-」；CALL 顯示持貨成本 + 保本價（原幣別）
-    let holdingCell = '<td><span style="color:var(--muted)">—</span></td>';
-    if (c.type === 'call') {
-      if (c.holdingAnalysis) {
-        const h = c.holdingAnalysis;
-        const cov = h.covered ? '✓' : '⚠';
-        holdingCell = `<td>
-          <div>${curSym}${num(toHKD(p, p.holdingCost))} × ${NUM.format(h.holdingShares)} <span style="font-size:10px">${cov}</span></div>
-          <div style="font-size:10px;color:var(--muted)">保本 ${curSym}${num(h.breakeven)}</div>
-        </td>`;
-      } else {
-        holdingCell = `<td><span style="color:var(--muted)">未填</span></td>`;
-      }
-    }
     rows.push(`
       <tr>
         <td>
@@ -1682,7 +1666,6 @@ function renderOpenPositions() {
         <td>${NUM.format(+p.sellPrice || 0)}</td>
         <td class="profit">${money(c.sellPremium)}</td>
         <td>${money(c.stockCost)}</td>
-        ${holdingCell}
         <td>${c.holdingDays}</td>
         <td class="profit">${money(c.perDay)}</td>
         <td class="${c.profit >= 0 ? 'profit' : 'loss'}">${money(c.profit)}</td>
@@ -1698,7 +1681,7 @@ function renderOpenPositions() {
       rows.push(`<tr class="subtotal-row">
           <td colspan="10" style="text-align:right;color:var(--muted)">${dateLabel} 小計（購買股票成本）</td>
           <td style="font-size:14px">${sc}</td>
-          <td colspan="4"></td>
+          <td colspan="3"></td>
         </tr>`);
       groupStockHKD = 0; groupStockUSD = 0;
     }
@@ -1706,7 +1689,7 @@ function renderOpenPositions() {
   tbody.innerHTML = rows.join('');
   // 合計列：每天期權金總收入（依原幣別分開），顯示在「期權金/天」欄下方
   foot.innerHTML = `<tr style="background:var(--bg);font-weight:600">
-      <td colspan="13" style="text-align:right;color:var(--muted)">每天期權金合計</td>
+      <td colspan="12" style="text-align:right;color:var(--muted)">每天期權金合計</td>
       <td class="profit" style="font-size:14px">${HKD.format(totalPerDayHKD)}${totalPerDayUSD !== 0 ? ' ＋ ' + USD.format(totalPerDayUSD) : ''}</td>
       <td></td>
     </tr>`;
