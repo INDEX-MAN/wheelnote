@@ -92,6 +92,11 @@
   .stat-card .pl-line .pl-ccy { font-size: 11px; color: var(--muted); font-weight: 600; margin-right: 5px; }
   .stat-card .pl-line.positive { color: var(--green); }
   .stat-card .pl-line.negative { color: var(--red); }
+  .stat-card .pl-line.pl-month { font-size: 14px; font-weight: 600; }
+  .stat-card .pl-line .pl-month-tag { font-size: 10px; color: var(--muted); font-weight: 700; margin-right: 6px; }
+  .stat-card .pl-line .pl-sub { font-size: 11px; color: var(--muted); font-weight: 600; margin-left: 6px; }
+  .stat-card .pl-line.pl-total { border-top: 1px solid var(--border); padding-top: 4px; margin-top: 2px; }
+  .stat-card .label .monthly-badge { font-size: 10px; color: var(--muted); border: 1px solid var(--border); padding: 0 6px; border-radius: 8px; text-transform: none; letter-spacing: 0; margin-left: 4px; }
   .stat-card .sublabel { font-size: 11px; color: var(--muted); margin-top: 4px; }
 
   .summary-bar {
@@ -333,6 +338,8 @@
     white-space: nowrap;
   }
   .subtotal-row td { background: var(--bg); font-weight: 600; border-top: 2px solid var(--border); }
+  th .th-ccy { font-size: 10px; color: var(--muted); font-weight: 700; opacity: .85; }
+  .table-note { font-size: 11px; color: var(--muted); margin-top: 6px; }
   th:first-child, td:first-child { text-align: left; }
   th {
     background: #fafbfc;
@@ -584,15 +591,19 @@
             <th>月份</th>
             <th>已平倉筆數</th>
             <th>持倉中筆數</th>
-            <th>淨期權金</th>
-            <th>手續費</th>
-            <th>已實現損益</th>
+            <th>淨期權金 <span class="th-ccy">HKD</span></th>
+            <th>淨期權金 <span class="th-ccy">USD</span></th>
+            <th>手續費 <span class="th-ccy">HKD</span></th>
+            <th>手續費 <span class="th-ccy">USD</span></th>
+            <th>已實現損益 <span class="th-ccy">HKD</span></th>
+            <th>已實現損益 <span class="th-ccy">USD</span></th>
             <th>勝率</th>
           </tr>
         </thead>
         <tbody id="monthlyBody"></tbody>
       </table>
     </div>
+    <div class="table-note">已實現損益 = 已平倉期權損益 ＋ 已賣出股票損益（計入其賣出月份）；HKD／USD 依原幣別分開顯示，不再 ×7.8 合併，故總計與上方「已實現損益」卡一致。</div>
   </section>
 
   <section class="section">
@@ -1388,8 +1399,28 @@ function togglePosHighlight(el) {
 }
 
 // ----- 月總結：把每個月份分開統計 -----
+// 每月已實現損益（原幣別分開）：期權依「賣出月份」，已賣出股票(holdings)依其「賣出月份」；新月份在前。
+// 回傳 [{ month: 'YYYY-MM', HKD, USD }]，供月總結表與「已實現損益」卡共用，兩處總額保證一致。
+function getMonthlyRealized() {
+  const m = {};
+  const add = (key, ccy, v) => {
+    if (!m[key]) m[key] = { HKD: 0, USD: 0 };
+    m[key][ccy] += v;
+  };
+  state.positions.forEach(p => {
+    if (!p.openDate || !p.closeDate) return;
+    const rate = p.currency === 'USD' ? USD_HKD_RATE : 1;
+    add(p.openDate.slice(0, 7), p.currency === 'USD' ? 'USD' : 'HKD', calc(p).profit / rate);
+  });
+  state.holdings.forEach(h => {
+    if (!h.closeDate || !(+h.realizedPL || 0)) return;
+    add(h.closeDate.slice(0, 7), h.currency === 'USD' ? 'USD' : 'HKD', +h.realizedPL || 0);
+  });
+  return Object.keys(m).sort((a, b) => b.localeCompare(a)).map(k => ({ month: k, HKD: m[k].HKD, USD: m[k].USD }));
+}
+
 function renderMonthlySummary() {
-  // 依「賣出月份（openDate）」分組所有交易
+  // 依「賣出月份（openDate）」分組所有交易；已賣出股票月份會另外併入（見 getMonthlyRealized）
   const groups = {};
   state.positions.forEach(p => {
     if (!p.openDate) return;
@@ -1398,37 +1429,72 @@ function renderMonthlySummary() {
     groups[key].push(p);
   });
 
-  const months = Object.keys(groups).sort((a, b) => b.localeCompare(a)); // 新月份在前
+  const mr = getMonthlyRealized();
+  const curRate = (c) => c === 'USD' ? USD_HKD_RATE : 1;
+  const byCurr = (list, native) => list.reduce((acc, x) => {
+    const k = x.currency === 'USD' ? 'USD' : 'HKD';
+    acc[k] += native(x);
+    return acc;
+  }, { HKD: 0, USD: 0 });
+  const plCls = (v) => v > 0 ? 'profit' : v < 0 ? 'loss' : 'neutral';
+
+  // 月份集合 = 有開倉的月份 ∪ 有已實現損益的月份（避免只有賣股、沒有開倉的月份被漏掉）
+  const monthSet = new Set(Object.keys(groups));
+  mr.forEach(r => monthSet.add(r.month));
+  const months = [...monthSet].sort((a, b) => b.localeCompare(a)); // 新月份在前
+
   document.getElementById('monthlyCount').textContent = months.length > 0 ? `(${months.length} 個月)` : '';
   const tbody = document.getElementById('monthlyBody');
 
   if (months.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><div class="icon">📅</div>尚未有任何交易紀錄</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><div class="icon">📅</div>尚未有任何交易紀錄</div></td></tr>`;
     return;
   }
 
-  tbody.innerHTML = months.map(key => {
-    const list = groups[key];
+  const T = { closed: 0, open: 0, npHKD: 0, npUSD: 0, commHKD: 0, commUSD: 0, plHKD: 0, plUSD: 0 };
+  const rows = months.map(key => {
+    const list = groups[key] || [];
     const closeds = list.filter(p => p.closeDate);
     const opens = list.filter(p => !p.closeDate);
-    const netPremium = closeds.reduce((s, p) => s + calc(p).netPremium, 0);
-    const commission = list.reduce((s, p) => s + toHKD(p, p.commission), 0);
-    const profit = closeds.reduce((s, p) => s + calc(p).profit, 0);
+    // 淨期權金：僅已平倉（買回價固定）；手續費：該月所有部位（含持倉中，同舊邏輯）
+    const np = byCurr(closeds, p => calc(p).netPremium / curRate(p.currency));
+    const comm = byCurr(list, p => +p.commission || 0);
+    const pl = mr.find(r => r.month === key) || { HKD: 0, USD: 0 };
     const wins = closeds.filter(p => calc(p).profit > 0).length;
     const winRate = closeds.length > 0 ? (wins / closeds.length) * 100 : 0;
-    const profitCls = profit > 0 ? 'profit' : profit < 0 ? 'loss' : 'neutral';
+    T.closed += closeds.length; T.open += opens.length;
+    T.npHKD += np.HKD; T.npUSD += np.USD; T.commHKD += comm.HKD; T.commUSD += comm.USD;
+    T.plHKD += pl.HKD; T.plUSD += pl.USD;
     const [y, m] = key.split('-');
     return `
       <tr>
         <td><span class="stock-name">${y} / ${m}</span></td>
         <td>${closeds.length}</td>
         <td>${opens.length}</td>
-        <td>${HKD.format(netPremium)}</td>
-        <td>${HKD.format(commission)}</td>
-        <td class="${profitCls}">${HKD.format(profit)}</td>
+        <td>${HKD.format(np.HKD)}</td>
+        <td>${USD.format(np.USD)}</td>
+        <td>${HKD.format(comm.HKD)}</td>
+        <td>${USD.format(comm.USD)}</td>
+        <td class="${plCls(pl.HKD)}">${HKD.format(pl.HKD)}</td>
+        <td class="${plCls(pl.USD)}">${USD.format(pl.USD)}</td>
         <td>${closeds.length > 0 ? winRate.toFixed(0) + '%' : '—'}</td>
       </tr>`;
   }).join('');
+
+  // 總計列（含已賣出股票損益，與「已實現損益」卡對得上）
+  tbody.innerHTML = rows + `
+    <tr class="subtotal-row">
+      <td>總計</td>
+      <td>${T.closed}</td>
+      <td>${T.open}</td>
+      <td>${HKD.format(T.npHKD)}</td>
+      <td>${USD.format(T.npUSD)}</td>
+      <td>${HKD.format(T.commHKD)}</td>
+      <td>${USD.format(T.commUSD)}</td>
+      <td class="${plCls(T.plHKD)}">${HKD.format(T.plHKD)}</td>
+      <td class="${plCls(T.plUSD)}">${USD.format(T.plUSD)}</td>
+      <td>—</td>
+    </tr>`;
 }
 
 function renderDashboard() {
@@ -1479,14 +1545,20 @@ function renderDashboard() {
   const unrealizedByCurr = byCurr(opens, p => calc(p).profit / curRate(p.currency));
   const plCls = (v) => v > 0 ? 'positive' : v < 0 ? 'negative' : '';
 
+  // 已實現損益卡：按月分開，每行並列原幣別 HKD + USD（總計含已賣出股票損益）
+  const monthlyRealized = getMonthlyRealized();
+  const combinedCls = (h, u) => { const v = h + u * USD_HKD_RATE; return v > 0 ? 'positive' : v < 0 ? 'negative' : ''; };
+  const holdSoldCount = state.holdings.filter(h => h.status === 'closed').length;
+
   document.getElementById('dashboard').innerHTML = `
     <div class="stat-card">
-      <div class="label">已實現損益</div>
+      <div class="label">已實現損益 <span class="monthly-badge">按月</span></div>
       <div class="pl-lines">
-        <div class="pl-line ${plCls(realizedByCurr.HKD)}"><span class="pl-ccy">HKD</span>${HKD.format(realizedByCurr.HKD)}</div>
-        <div class="pl-line ${plCls(realizedByCurr.USD)}"><span class="pl-ccy">USD</span>${USD.format(realizedByCurr.USD)}</div>
+        ${monthlyRealized.map(r => `
+          <div class="pl-line pl-month ${combinedCls(r.HKD, r.USD)}"><span class="pl-month-tag">${r.month.slice(2)}</span>${HKD.format(r.HKD)}<span class="pl-sub">${USD.format(r.USD)}</span></div>`).join('')}
+        <div class="pl-line pl-total ${combinedCls(realizedByCurr.HKD, realizedByCurr.USD)}"><span class="pl-ccy">總計</span>${HKD.format(realizedByCurr.HKD)}<span class="pl-sub">${USD.format(realizedByCurr.USD)}</span></div>
       </div>
-      <div class="sublabel">${closeds.length} 筆已平倉</div>
+      <div class="sublabel">${closeds.length} 筆已平倉${holdSoldCount > 0 ? `＋ ${holdSoldCount} 筆股票已賣出` : ''}</div>
     </div>
     <div class="stat-card">
       <div class="label">勝率</div>
