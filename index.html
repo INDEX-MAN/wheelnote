@@ -1661,8 +1661,6 @@ function renderOpenPositions() {
             <button class="btn-primary btn-sm" onclick="openCloseModal('${p.id}','assigned')" title="${(p.type||'put')==='call'?'被指派交貨':'被指派接貨'}">${(p.type||'put')==='call'?'交':'接'}</button>
             <button class="btn-success btn-sm" onclick="openCloseModal('${p.id}')" title="買回權利結束（收錢）">平</button>
             <button class="btn-secondary btn-sm" onclick="openRollModal('${p.id}')" title="關舊倉+開新倉（轉倉）">轉</button>
-          </div>
-          <div class="actions">
             <button class="btn-secondary btn-sm" onclick="openEditModal('${p.id}')" title="編輯">編</button>
             <button class="btn-danger btn-sm" onclick="deletePosition('${p.id}')" title="刪除">刪</button>
           </div>
