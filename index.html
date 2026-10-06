@@ -1604,7 +1604,7 @@ function renderSummary() {
     <span>持貨 <strong>${openHoldingsCount}</strong> 筆（购入股票）</span>
     <span>已平倉 <strong>${closeds.length}</strong> 筆</span>
     <span>總手續費 <strong>${HKD.format(totalCommission)}</strong></span>
-    ${hasUSD ? '<span style="color:var(--muted)">美元(USD)部位已 ×7.8 換算港幣顯示</span>' : ''}
+    ${hasUSD ? '<span style="color:var(--muted)">美元(USD)部位已按原幣別顯示；持貨(股票)表格以 ×7.8 換算港幣</span>' : ''}
     <span style="color:var(--muted)">資料更新於 ${fmtDate(today())}</span>
   `;
 }
@@ -1628,27 +1628,34 @@ function renderOpenPositions() {
     foot.innerHTML = '';
     return;
   }
-  // 持倉中「期權金/天」合計 = 每筆每天期權金收入加總（已轉港幣）
-  const totalPerDay = opens.reduce((s, p) => s + calc(p).perDay, 0);
-  // 按到期日分組：每組最後一筆後插入「購買股票成本」小計列（stockCost 已轉港幣）
+  // 持倉中「期權金/天」合計：依原幣別分開（USD 部位顯示美金、HKD 部位顯示港幣，不 ×7.8 合併）
+  const totalPerDayHKD = opens.reduce((s, p) => s + (p.currency === 'USD' ? 0 : calc(p).perDay), 0);
+  const totalPerDayUSD = opens.reduce((s, p) => s + (p.currency === 'USD' ? calc(p).perDay / USD_HKD_RATE : 0), 0);
+  // 按到期日分組：每組最後一筆後插入「購買股票成本」小計列（依原幣別分開）
   const rows = [];
-  let groupStockCost = 0;
+  let groupStockHKD = 0, groupStockUSD = 0;
   opens.forEach((p, i) => {
     const c = calc(p);
-    groupStockCost += c.stockCost;
+    const isUSD = p.currency === 'USD';
+    const rate = isUSD ? USD_HKD_RATE : 1;
+    const money = (v) => (isUSD ? USD : HKD).format(v / rate);   // calc 輸出為港幣 → 換回原幣別顯示
+    const num = (v) => NUM.format(v / rate);                     // 同上，純數字
+    const curSym = isUSD ? 'US$' : 'HK$';
+    if (isUSD) groupStockUSD += c.stockCost / USD_HKD_RATE;
+    else groupStockHKD += c.stockCost;
     const typeBadge = c.type === 'call'
       ? '<span class="badge badge-green">CALL</span>'
       : '<span class="badge badge-blue">PUT</span>';
     const curBadge = p.currency === 'USD' ? ' <span class="badge" style="background:#eef2ff;color:#4338ca">USD</span>' : '';
-    // 持貨成本 / 保本價欄：PUT 顯示「-」；CALL 顯示持貨成本 + 保本價
+    // 持貨成本 / 保本價欄：PUT 顯示「-」；CALL 顯示持貨成本 + 保本價（原幣別）
     let holdingCell = '<td><span style="color:var(--muted)">—</span></td>';
     if (c.type === 'call') {
       if (c.holdingAnalysis) {
         const h = c.holdingAnalysis;
         const cov = h.covered ? '✓' : '⚠';
         holdingCell = `<td>
-          <div>HK$${NUM.format(toHKD(p, p.holdingCost))} × ${NUM.format(h.holdingShares)} <span style="font-size:10px">${cov}</span></div>
-          <div style="font-size:10px;color:var(--muted)">保本 HK$${NUM.format(h.breakeven)}</div>
+          <div>${curSym}${num(toHKD(p, p.holdingCost))} × ${NUM.format(h.holdingShares)} <span style="font-size:10px">${cov}</span></div>
+          <div style="font-size:10px;color:var(--muted)">保本 ${curSym}${num(h.breakeven)}</div>
         </td>`;
       } else {
         holdingCell = `<td><span style="color:var(--muted)">未填</span></td>`;
@@ -1668,38 +1675,42 @@ function renderOpenPositions() {
         <td>${typeBadge}${p.rolledFrom ? ' <span class="badge badge-blue" title="由舊倉轉倉而來">🔄轉倉</span>' : ''}${curBadge}</td>
         <td>
           <div class="stock-name">${esc(p.stockName)}</div>
-          <div class="strike-info">行權價 ${NUM.format(toHKD(p, p.strikePrice))}</div>
+          <div class="strike-info">行權價 ${NUM.format(+p.strikePrice || 0)}</div>
         </td>
         <td>${fmtDateShort(p.openDate)}</td>
         <td>${fmtDateShort(p.expirationDate)}</td>
         <td>${expiryBadge(c.daysToExpiry)}</td>
         <td>${NUM.format(p.contracts)}</td>
         <td>${NUM.format(p.sharesPerContract)}</td>
-        <td>${NUM.format(toHKD(p, p.sellPrice))}</td>
-        <td class="profit">${HKD.format(c.sellPremium)}</td>
-        <td>${HKD.format(c.stockCost)}</td>
+        <td>${NUM.format(+p.sellPrice || 0)}</td>
+        <td class="profit">${money(c.sellPremium)}</td>
+        <td>${money(c.stockCost)}</td>
         ${holdingCell}
         <td>${c.holdingDays}</td>
-        <td class="profit">${HKD.format(c.perDay)}</td>
-        <td class="${c.profit >= 0 ? 'profit' : 'loss'}">${HKD.format(c.profit)}</td>
+        <td class="profit">${money(c.perDay)}</td>
+        <td class="${c.profit >= 0 ? 'profit' : 'loss'}">${money(c.profit)}</td>
       </tr>`);
-    // 同到期日分組結束：插入小計列（該到期日的購買股票成本合計）
+    // 同到期日分組結束：插入小計列（該到期日的購買股票成本合計，依原幣別分開）
     const isLastInGroup = (i === opens.length - 1) || (opens[i + 1].expirationDate !== p.expirationDate);
     if (isLastInGroup) {
       const dateLabel = p.expirationDate ? fmtDateShort(p.expirationDate) : '無到期日';
+      let sc = '';
+      if (groupStockHKD !== 0) sc += HKD.format(groupStockHKD);
+      if (groupStockUSD !== 0) sc += (sc ? ' ＋ ' : '') + USD.format(groupStockUSD);
+      if (!sc) sc = HKD.format(0);
       rows.push(`<tr class="subtotal-row">
           <td colspan="10" style="text-align:right;color:var(--muted)">${dateLabel} 小計（購買股票成本）</td>
-          <td style="font-size:14px">${HKD.format(groupStockCost)}</td>
+          <td style="font-size:14px">${sc}</td>
           <td colspan="4"></td>
         </tr>`);
-      groupStockCost = 0;
+      groupStockHKD = 0; groupStockUSD = 0;
     }
   });
   tbody.innerHTML = rows.join('');
-  // 合計列：每天期權金總收入，顯示在「期權金/天」欄下方
+  // 合計列：每天期權金總收入（依原幣別分開），顯示在「期權金/天」欄下方
   foot.innerHTML = `<tr style="background:var(--bg);font-weight:600">
       <td colspan="13" style="text-align:right;color:var(--muted)">每天期權金合計</td>
-      <td class="profit" style="font-size:14px">${HKD.format(totalPerDay)}</td>
+      <td class="profit" style="font-size:14px">${HKD.format(totalPerDayHKD)}${totalPerDayUSD !== 0 ? ' ＋ ' + USD.format(totalPerDayUSD) : ''}</td>
       <td></td>
     </tr>`;
 }
@@ -1716,6 +1727,9 @@ function renderClosedPositions() {
   }
   tbody.innerHTML = closeds.map(p => {
     const c = calc(p);
+    const isUSD = p.currency === 'USD';
+    const rate = isUSD ? USD_HKD_RATE : 1;
+    const money = (v) => (isUSD ? USD : HKD).format(v / rate);   // calc 輸出為港幣 → 換回原幣別顯示
     const profitCls = c.profit > 0 ? 'profit' : c.profit < 0 ? 'loss' : 'neutral';
     const typeBadge = c.type === 'call'
       ? '<span class="badge badge-green">CALL</span>'
@@ -1735,19 +1749,19 @@ function renderClosedPositions() {
         <td>${typeBadge}${assignBadge}${autoBadge}${p.rolledTo ? ' <span class="badge badge-gray" title="已轉倉到新部位">🔄已轉倉</span>' : ''}${curBadge}</td>
         <td>
           <div class="stock-name">${esc(p.stockName)}</div>
-          <div class="strike-info">行權價 ${NUM.format(toHKD(p, p.strikePrice))}</div>
+          <div class="strike-info">行權價 ${NUM.format(+p.strikePrice || 0)}</div>
         </td>
         <td>${fmtDateShort(p.openDate)}</td>
         <td>${fmtDateShort(p.closeDate)}</td>
         <td>${fmtDateShort(p.expirationDate)}</td>
         <td>${c.holdingDays}</td>
         <td>${NUM.format(p.contracts)}</td>
-        <td>${NUM.format(toHKD(p, p.sellPrice))}</td>
-        <td>${c.assigned ? '<span style="color:var(--muted)">-</span>' : NUM.format(toHKD(p, p.buyPrice))}</td>
-        <td>${HKD.format(c.netPremium)}</td>
-        <td>${HKD.format(c.stockCost)}</td>
-        <td>${HKD.format(toHKD(p, p.commission))}</td>
-        <td class="${profitCls}">${HKD.format(c.profit)}</td>
+        <td>${NUM.format(+p.sellPrice || 0)}</td>
+        <td>${c.assigned ? '<span style="color:var(--muted)">-</span>' : NUM.format(+p.buyPrice || 0)}</td>
+        <td>${money(c.netPremium)}</td>
+        <td>${money(c.stockCost)}</td>
+        <td>${money(toHKD(p, p.commission))}</td>
+        <td class="${profitCls}">${money(c.profit)}</td>
         <td class="${profitCls}">${Number(c.returnPct.toFixed(2))}%</td>
       </tr>`;
   }).join('');
