@@ -339,6 +339,9 @@
   }
   .subtotal-row td { background: var(--bg); font-weight: 600; border-top: 2px solid var(--border); }
   th .th-ccy { font-size: 10px; color: var(--muted); font-weight: 700; opacity: .85; }
+  .cell-sub { font-size: 11px; color: var(--muted); font-weight: 500; margin-top: 2px; }
+  .cell-sub.profit { color: var(--green); }
+  .cell-sub.loss { color: var(--red); }
   .table-note { font-size: 11px; color: var(--muted); margin-top: 6px; }
   th:first-child, td:first-child { text-align: left; }
   th {
@@ -591,12 +594,9 @@
             <th>月份</th>
             <th>已平倉筆數</th>
             <th>持倉中筆數</th>
-            <th>淨期權金 <span class="th-ccy">HKD</span></th>
-            <th>淨期權金 <span class="th-ccy">USD</span></th>
-            <th>手續費 <span class="th-ccy">HKD</span></th>
-            <th>手續費 <span class="th-ccy">USD</span></th>
-            <th>已實現損益 <span class="th-ccy">HKD</span></th>
-            <th>已實現損益 <span class="th-ccy">USD</span></th>
+            <th>淨期權金 <span class="th-ccy">HKD/USD</span></th>
+            <th>手續費 <span class="th-ccy">HKD/USD</span></th>
+            <th>已實現損益 <span class="th-ccy">HKD/USD</span></th>
             <th>勝率</th>
           </tr>
         </thead>
@@ -1437,6 +1437,9 @@ function renderMonthlySummary() {
     return acc;
   }, { HKD: 0, USD: 0 });
   const plCls = (v) => v > 0 ? 'profit' : v < 0 ? 'loss' : 'neutral';
+  // 每欄上下兩行：上行港幣、下行美金（原幣別），美金為 0 就不顯示，避免表格過寬
+  const cell = (h, u) => `<div>${HKD.format(h)}</div>${u !== 0 ? `<div class="cell-sub">${USD.format(u)}</div>` : ''}`;
+  const plCell = (h, u) => `<div class="${plCls(h)}">${HKD.format(h)}</div>${u !== 0 ? `<div class="cell-sub ${plCls(u)}">${USD.format(u)}</div>` : ''}`;
 
   // 月份集合 = 有開倉的月份 ∪ 有已實現損益的月份（避免只有賣股、沒有開倉的月份被漏掉）
   const monthSet = new Set(Object.keys(groups));
@@ -1447,7 +1450,7 @@ function renderMonthlySummary() {
   const tbody = document.getElementById('monthlyBody');
 
   if (months.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><div class="icon">📅</div>尚未有任何交易紀錄</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><div class="icon">📅</div>尚未有任何交易紀錄</div></td></tr>`;
     return;
   }
 
@@ -1471,12 +1474,9 @@ function renderMonthlySummary() {
         <td><span class="stock-name">${y} / ${m}</span></td>
         <td>${closeds.length}</td>
         <td>${opens.length}</td>
-        <td>${HKD.format(np.HKD)}</td>
-        <td>${USD.format(np.USD)}</td>
-        <td>${HKD.format(comm.HKD)}</td>
-        <td>${USD.format(comm.USD)}</td>
-        <td class="${plCls(pl.HKD)}">${HKD.format(pl.HKD)}</td>
-        <td class="${plCls(pl.USD)}">${USD.format(pl.USD)}</td>
+        <td>${cell(np.HKD, np.USD)}</td>
+        <td>${cell(comm.HKD, comm.USD)}</td>
+        <td>${plCell(pl.HKD, pl.USD)}</td>
         <td>${closeds.length > 0 ? winRate.toFixed(0) + '%' : '—'}</td>
       </tr>`;
   }).join('');
@@ -1487,12 +1487,9 @@ function renderMonthlySummary() {
       <td>總計</td>
       <td>${T.closed}</td>
       <td>${T.open}</td>
-      <td>${HKD.format(T.npHKD)}</td>
-      <td>${USD.format(T.npUSD)}</td>
-      <td>${HKD.format(T.commHKD)}</td>
-      <td>${USD.format(T.commUSD)}</td>
-      <td class="${plCls(T.plHKD)}">${HKD.format(T.plHKD)}</td>
-      <td class="${plCls(T.plUSD)}">${USD.format(T.plUSD)}</td>
+      <td>${cell(T.npHKD, T.npUSD)}</td>
+      <td>${cell(T.commHKD, T.commUSD)}</td>
+      <td>${plCell(T.plHKD, T.plUSD)}</td>
       <td>—</td>
     </tr>`;
 }
