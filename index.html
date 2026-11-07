@@ -1529,19 +1529,24 @@ function renderDashboard() {
   const openPutStockCost = openPuts.reduce((s, p) => s + calc(p).stockCost, 0);   // SHORT PUT 接貨成本（被指派時以行權價買股票；潛在成本）
   const openHoldings = state.holdings.filter(h => h.status === 'open');
   const openHoldingsCost = openHoldings.reduce((s, h) => s + toHKD(h, h.costPerShare) * (+h.shares || 0), 0);
-  // 平均每張期權每天收入：每筆已平倉 = 淨期權金 / 持倉天 / 張數，再取平均（含虧損/平手單）
-  const dailyPerContractList = closeds
-    .map(p => {
-      const c = calc(p);
-      const contracts = +p.contracts || 0;
-      return contracts > 0 && c.holdingDays > 0 ? c.netPremium / c.holdingDays / contracts : null;
-    })
-    .filter(x => x !== null);  // 只剔除資料不全者，保留虧損與平手單，避免平均值虛增
-  const avgDailyPerContract = dailyPerContractList.length > 0
-    ? dailyPerContractList.reduce((s, x) => s + x, 0) / dailyPerContractList.length
-    : 0;
+  // 日曆跨度：首筆開倉 → 最後一筆平倉（真正的日曆天數）
+  const firstOpen = closeds.map(p => p.openDate).filter(Boolean).sort()[0];
+  const lastClose = closeds.map(p => p.closeDate).filter(Boolean).sort().pop();
+  const calendarSpan = (firstOpen && lastClose) ? daysBetween(firstOpen, lastClose) + 1 : 0;
+  // 平均每張期權每天收入（加權）：Σ淨期權金 ÷ Σ(張數×持倉天數)，
+  // 按實際「張·天」加權，避免短線細單把平均值撐大
+  let sumPremiumHKD = 0, sumContracts = 0, contractDays = 0;
+  closeds.forEach(p => {
+    const c = calc(p);
+    const n = +p.contracts || 0;
+    sumPremiumHKD += c.netPremium;
+    sumContracts += n;
+    contractDays += n * c.holdingDays;
+  });
+  const avgDailyPerContract = contractDays > 0 ? sumPremiumHKD / contractDays : 0;
+  const perCalendarDay = calendarSpan > 0 ? sumPremiumHKD / calendarSpan : 0;
+  const avgHoldPerContract = sumContracts > 0 ? contractDays / sumContracts : 0;
   const dailyClass = avgDailyPerContract > 0 ? 'positive' : avgDailyPerContract < 0 ? 'negative' : '';
-  const totalHoldingDays = closeds.reduce((s, p) => s + calc(p).holdingDays, 0);
 
   const profitClass = totalProfit > 0 ? 'positive' : totalProfit < 0 ? 'negative' : '';
   const unrealizedClass = unrealized > 0 ? 'positive' : unrealized < 0 ? 'negative' : '';
@@ -1606,7 +1611,8 @@ function renderDashboard() {
     <div class="stat-card">
       <div class="label">平均每張期權每天收入</div>
       <div class="value ${dailyClass}">${closeds.length > 0 ? HKD.format(avgDailyPerContract) : '—'}</div>
-      <div class="sublabel">累計持有 ${totalHoldingDays} 天 / ${closeds.length} 筆</div>
+      <div class="sublabel">加權：${NUM.format(sumContracts)} 張 × 平均 ${avgHoldPerContract.toFixed(1)} 天 = ${NUM.format(contractDays)} 張·天 · 日曆跨度 ${calendarSpan} 天</div>
+      <div class="sublabel">平均每天總收入 ${HKD.format(perCalendarDay)}（Σ淨期權金 ${HKD.format(sumPremiumHKD)} ÷ ${calendarSpan} 天）</div>
     </div>
   `;
 }
