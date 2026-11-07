@@ -603,7 +603,7 @@
         <tbody id="monthlyBody"></tbody>
       </table>
     </div>
-    <div class="table-note">已實現損益 = 已平倉期權損益 ＋ 已賣出股票損益（計入其賣出月份）；HKD／USD 依原幣別分開顯示，不再 ×7.8 合併，故總計與上方「已實現損益」卡一致。</div>
+    <div class="table-note">已實現損益 = 已平倉期權損益（淨期權金 − 手續費，只計已平倉）；股票/持貨損益另計，不計入此欄。HKD／USD 依原幣別分開顯示，故總計與上方「已實現損益」卡一致。</div>
   </section>
 
   <section class="section">
@@ -980,7 +980,10 @@ function calc(p) {
     profit = holdingAnalysis.netHoldingPL;
   }
 
+  const optionProfit = netPremium - comm;                 // 只算期權（不含股票/持貨損益）
+  const stockProfit = profit - optionProfit;              // 股票/持貨部分（普通期權為 0）
   const returnPct = stockCost > 0 ? (profit / stockCost) * 100 : 0;
+  const optionReturnPct = stockCost > 0 ? (optionProfit / stockCost) * 100 : 0;
 
   const isOpen = !p.closeDate;
   const refDate = p.closeDate || today();
@@ -1001,8 +1004,8 @@ function calc(p) {
   }
 
   return {
-    type, sellPremium, buyPremium, netPremium, profit,
-    stockCost, netStockCost, returnPct, holdingDays, perDay,
+    type, sellPremium, buyPremium, netPremium, profit, optionProfit, stockProfit,
+    stockCost, netStockCost, returnPct, optionReturnPct, holdingDays, perDay,
     daysToExpiry, isOpen, closingCost, holdingAnalysis,
     assigned, assignShares, assignCostPerShare, assignBreakevenPerShare,
     assignCostTotal: stockCost, assignBreakevenTotal: netStockCost
@@ -1398,7 +1401,7 @@ function togglePosHighlight(el) {
 }
 
 // ----- 月總結：把每個月份分開統計 -----
-// 每月已實現損益（原幣別分開）：期權依「賣出月份」，已賣出股票(holdings)依其「賣出月份」；新月份在前。
+// 每月已實現損益（原幣別分開）：只計已平倉期權，不含股票/持貨損益；新月份在前。
 // 回傳 [{ month: 'YYYY-MM', HKD, USD }]，供月總結表與「已實現損益」卡共用，兩處總額保證一致。
 function getMonthlyRealized() {
   const m = {};
@@ -1409,17 +1412,33 @@ function getMonthlyRealized() {
   state.positions.forEach(p => {
     if (!p.openDate || !p.closeDate) return;
     const rate = p.currency === 'USD' ? USD_HKD_RATE : 1;
-    add(p.openDate.slice(0, 7), p.currency === 'USD' ? 'USD' : 'HKD', calc(p).profit / rate);
-  });
-  state.holdings.forEach(h => {
-    if (!h.closeDate || !(+h.realizedPL || 0)) return;
-    add(h.closeDate.slice(0, 7), h.currency === 'USD' ? 'USD' : 'HKD', +h.realizedPL || 0);
+    add(p.openDate.slice(0, 7), p.currency === 'USD' ? 'USD' : 'HKD', calc(p).optionProfit / rate);
   });
   return Object.keys(m).sort((a, b) => b.localeCompare(a)).map(k => ({ month: k, HKD: m[k].HKD, USD: m[k].USD }));
 }
 
+// 股票/持貨損益（另計，不計入期權已實現損益）：持貨直接賣出 + CALL 交貨時的股票差價
+function getStockPL() {
+  const acc = { HKD: 0, USD: 0 };
+  state.holdings.forEach(h => {
+    if (h.status !== 'closed' || !h.closeDate) return;
+    const v = +h.realizedPL || 0;
+    if (!v) return;
+    acc[h.currency === 'USD' ? 'USD' : 'HKD'] += v;
+  });
+  state.positions.forEach(p => {
+    if (p.type !== 'call' || p.outcome !== 'assigned' || !p.closeDate) return;
+    const c = calc(p);
+    const rate = p.currency === 'USD' ? USD_HKD_RATE : 1;
+    const v = (c.stockProfit || 0) / rate;
+    if (!v) return;
+    acc[p.currency === 'USD' ? 'USD' : 'HKD'] += v;
+  });
+  return acc;
+}
+
 function renderMonthlySummary() {
-  // 依「賣出月份（openDate）」分組所有交易；已賣出股票月份會另外併入（見 getMonthlyRealized）
+  // 依「賣出月份（openDate）」分組所有期權交易
   const groups = {};
   state.positions.forEach(p => {
     if (!p.openDate) return;
@@ -1440,7 +1459,7 @@ function renderMonthlySummary() {
   const cell = (h, u) => `<div>${HKD.format(h)}</div>${u !== 0 ? `<div class="cell-sub">${USD.format(u)}</div>` : ''}`;
   const plCell = (h, u) => `<div class="${plCls(h)}">${HKD.format(h)}</div>${u !== 0 ? `<div class="cell-sub ${plCls(u)}">${USD.format(u)}</div>` : ''}`;
 
-  // 月份集合 = 有開倉的月份 ∪ 有已實現損益的月份（避免只有賣股、沒有開倉的月份被漏掉）
+  // 月份集合 = 有開倉的月份 ∪ 有已實現損益的月份（皆只計期權）
   const monthSet = new Set(Object.keys(groups));
   mr.forEach(r => monthSet.add(r.month));
   const months = [...monthSet].sort((a, b) => b.localeCompare(a)); // 新月份在前
@@ -1458,11 +1477,11 @@ function renderMonthlySummary() {
     const list = groups[key] || [];
     const closeds = list.filter(p => p.closeDate);
     const opens = list.filter(p => !p.closeDate);
-    // 淨期權金：僅已平倉（買回價固定）；手續費：該月所有部位（含持倉中，同舊邏輯）
+    // 淨期權金與手續費都只算「已平倉」，確保 淨期權金 − 手續費 = 已實現損益
     const np = byCurr(closeds, p => calc(p).netPremium / curRate(p.currency));
-    const comm = byCurr(list, p => +p.commission || 0);
+    const comm = byCurr(closeds, p => +p.commission || 0);
     const pl = mr.find(r => r.month === key) || { HKD: 0, USD: 0 };
-    const wins = closeds.filter(p => calc(p).profit > 0).length;
+    const wins = closeds.filter(p => calc(p).optionProfit > 0).length;
     const winRate = closeds.length > 0 ? (wins / closeds.length) * 100 : 0;
     T.closed += closeds.length; T.open += opens.length;
     T.npHKD += np.HKD; T.npUSD += np.USD; T.commHKD += comm.HKD; T.commUSD += comm.USD;
@@ -1480,7 +1499,7 @@ function renderMonthlySummary() {
       </tr>`;
   }).join('');
 
-  // 總計列（含已賣出股票損益，與「已實現損益」卡對得上）
+  // 總計列（只計期權，與「已實現損益」卡對得上）
   tbody.innerHTML = rows + `
     <tr class="subtotal-row">
       <td>總計</td>
@@ -1501,10 +1520,10 @@ function renderDashboard() {
   const closedPuts = closeds.filter(p => (p.type || 'put') === 'put');
   const closedCalls = closeds.filter(p => p.type === 'call');
 
-  const totalProfit = closeds.reduce((s, p) => s + calc(p).profit, 0) + state.holdings.reduce((s, h) => s + toHKD(h, h.realizedPL || 0), 0);
+  const totalProfit = closeds.reduce((s, p) => s + calc(p).profit, 0);
   const putProfit = closedPuts.reduce((s, p) => s + calc(p).profit, 0);
   const callProfit = closedCalls.reduce((s, p) => s + calc(p).profit, 0);
-  const wins = closeds.filter(p => calc(p).profit > 0).length;
+  const wins = closeds.filter(p => calc(p).optionProfit > 0).length;
   const winRate = closeds.length > 0 ? (wins / closeds.length) * 100 : 0;
   const unrealized = opens.reduce((s, p) => s + calc(p).profit, 0);
   const openPutStockCost = openPuts.reduce((s, p) => s + calc(p).stockCost, 0);   // SHORT PUT 接貨成本（被指派時以行權價買股票；潛在成本）
@@ -1534,17 +1553,14 @@ function renderDashboard() {
     acc[k] += native(x);
     return acc;
   }, { HKD: 0, USD: 0 });
-  const realizedByCurr = byCurr(closeds, p => calc(p).profit / curRate(p.currency));
-  const holdB = byCurr(state.holdings, h => +h.realizedPL || 0); // 持股已賣出的原幣損益
-  realizedByCurr.HKD += holdB.HKD;
-  realizedByCurr.USD += holdB.USD;
+  const realizedByCurr = byCurr(closeds, p => calc(p).optionProfit / curRate(p.currency));
   const unrealizedByCurr = byCurr(opens, p => calc(p).profit / curRate(p.currency));
   const plCls = (v) => v > 0 ? 'positive' : v < 0 ? 'negative' : '';
 
-  // 已實現損益卡：按月分開，每行並列原幣別 HKD + USD（總計含已賣出股票損益）
+  // 已實現損益卡：按月分開，每行並列原幣別 HKD + USD（只計已平倉期權）
   const monthlyRealized = getMonthlyRealized();
+  const stockPL = getStockPL();
   const combinedCls = (h, u) => { const v = h + u * USD_HKD_RATE; return v > 0 ? 'positive' : v < 0 ? 'negative' : ''; };
-  const holdSoldCount = state.holdings.filter(h => h.status === 'closed').length;
 
   document.getElementById('dashboard').innerHTML = `
     <div class="stat-card">
@@ -1554,7 +1570,15 @@ function renderDashboard() {
           <div class="pl-line pl-month ${combinedCls(r.HKD, r.USD)}"><span class="pl-month-tag">${r.month.slice(2)}</span>${HKD.format(r.HKD)}<span class="pl-sub">${USD.format(r.USD)}</span></div>`).join('')}
         <div class="pl-line pl-total ${combinedCls(realizedByCurr.HKD, realizedByCurr.USD)}"><span class="pl-ccy">總計</span>${HKD.format(realizedByCurr.HKD)}<span class="pl-sub">${USD.format(realizedByCurr.USD)}</span></div>
       </div>
-      <div class="sublabel">${closeds.length} 筆已平倉${holdSoldCount > 0 ? `＋ ${holdSoldCount} 筆股票已賣出` : ''}</div>
+      <div class="sublabel">${closeds.length} 筆已平倉</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">股票損益 <span class="monthly-badge">另計</span></div>
+      <div class="pl-lines">
+        <div class="pl-line ${plCls(stockPL.HKD)}"><span class="pl-ccy">HKD</span>${HKD.format(stockPL.HKD)}</div>
+        <div class="pl-line ${plCls(stockPL.USD)}"><span class="pl-ccy">USD</span>${USD.format(stockPL.USD)}</div>
+      </div>
+      <div class="sublabel">持貨賣出 ＋ CALL 交貨的股票差價（不計入期權已實現損益）</div>
     </div>
     <div class="stat-card">
       <div class="label">勝率</div>
@@ -1710,7 +1734,7 @@ function renderClosedPositions() {
     const isUSD = p.currency === 'USD';
     const rate = isUSD ? USD_HKD_RATE : 1;
     const money = (v) => (isUSD ? USD : HKD).format(v / rate);   // calc 輸出為港幣 → 換回原幣別顯示
-    const profitCls = c.profit > 0 ? 'profit' : c.profit < 0 ? 'loss' : 'neutral';
+    const profitCls = c.optionProfit > 0 ? 'profit' : c.optionProfit < 0 ? 'loss' : 'neutral';
     const typeBadge = c.type === 'call'
       ? '<span class="badge badge-green">CALL</span>'
       : '<span class="badge badge-blue">PUT</span>';
@@ -1741,8 +1765,8 @@ function renderClosedPositions() {
         <td>${money(c.netPremium)}</td>
         <td>${money(c.stockCost)}</td>
         <td>${money(toHKD(p, p.commission))}</td>
-        <td class="${profitCls}">${money(c.profit)}</td>
-        <td class="${profitCls}">${Number(c.returnPct.toFixed(2))}%</td>
+        <td class="${profitCls}">${money(c.optionProfit)}</td>
+        <td class="${profitCls}">${Number(c.optionReturnPct.toFixed(2))}%</td>
       </tr>`;
   }).join('');
 }
@@ -2712,7 +2736,7 @@ function updatePreview() {
     const plAssigned = h.netHoldingPL;  // 被指派
     // 保留股票的情境：未來股價不變，但 effective cost 降低
     // 損益等於 premium - 手續費（如果不算股價變動）
-    const plKeepStock = c.profit;  // 只算 premium 損益
+    const plKeepStock = c.optionProfit;  // 只算 premium 損益
     // 現在平倉：若用 buyPrice 0 表示沒填，需明確顯示
     const plCloseNow = data.buyPrice > 0
       ? toHKD(data, (data.sellPrice - data.buyPrice) * data.sharesPerContract * data.contracts - (data.commission || 0))
@@ -2783,7 +2807,7 @@ function updatePreview() {
       `;
     } else {
       assignedHtml = `
-        <div class="label" style="grid-column:1/-1;font-size:12px;background:#ecfdf5;padding:8px;border-radius:4px;border:1px dashed #16a34a">📤 交貨：以行權價賣出持股、期權金全收。上方 P&L（${HKD.format(c.profit)}）已含持股損益，連結的持貨會自動平倉。</div>
+        <div class="label" style="grid-column:1/-1;font-size:12px;background:#ecfdf5;padding:8px;border-radius:4px;border:1px dashed #16a34a">📤 交貨：期權 P&L ${HKD.format(c.optionProfit)} ＋ 持貨損益 ${HKD.format(c.stockProfit)}（合計 ${HKD.format(c.profit)}）。股票損益另計，不計入期權已實現損益；連結的持貨會自動平倉。</div>
       `;
     }
   }
@@ -2793,10 +2817,10 @@ function updatePreview() {
     <div class="label">賣出期權金</div><div class="val profit">${HKD.format(c.sellPremium)}</div>
     <div class="label">買入期權金</div><div class="val loss">${HKD.format(c.buyPremium)}</div>
     <div class="label">淨期權金</div><div class="val">${HKD.format(c.netPremium)}</div>
-    <div class="label">手續費後 P&L</div><div class="val ${c.profit >= 0 ? 'profit' : 'loss'}">${HKD.format(c.profit)}</div>
+    <div class="label">手續費後 P&L（期權）</div><div class="val ${c.optionProfit >= 0 ? 'profit' : 'loss'}">${HKD.format(c.optionProfit)}</div>
     <div class="label">${stockLabel}</div><div class="val">${HKD.format(c.stockCost)}</div>
     <div class="label">${netLabel}</div><div class="val">${HKD.format(c.netStockCost)}</div>
-    <div class="label">報酬率</div><div class="val ${c.returnPct >= 0 ? 'profit' : 'loss'}">${c.returnPct.toFixed(2)}%</div>
+    <div class="label">報酬率</div><div class="val ${c.optionReturnPct >= 0 ? 'profit' : 'loss'}">${c.optionReturnPct.toFixed(2)}%</div>
     <div class="label">持倉天數</div><div class="val">${c.holdingDays} 天</div>
     <div class="label">每天收期權金</div><div class="val profit">${HKD.format(c.perDay)}</div>
     ${dte !== null ? `
